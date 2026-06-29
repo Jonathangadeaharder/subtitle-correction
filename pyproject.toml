@@ -1,0 +1,23 @@
+[project]
+name = "subtitle-correction"
+version = "0.1.0"
+description = "Unified subtitle correction toolkit: scraping, aligning, filtering, fine-tuning, and evaluating"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.15",
+    "rich>=14",
+    "pysrt>=1.1",
+    "requests>=2.31",
+    "guessit>=3.8",
+    "mlx-lm>=0.23",
+    "mlx-audio>=0.4",
+    "pyyaml>=6.0",
+    "langdetect>=1.0",
+]
+
+[project.scripts]
+subtitle-correction = "subtitle_correction.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
