@@ -5,6 +5,13 @@ from rich.console import Console
 
 console = Console()
 
+
+def load_mlx_model(model_name: str):
+    """Load an MLX model + tokenizer (shared by inference and reference-free paths)."""
+    from mlx_lm import load
+
+    return load(model_name)
+
 SYSTEM_PROMPT = (
     "You are a subtitle corrector. "
     "You receive two inputs: a Whisper transcription (correct timing, may contain mishearings or hallucinations) "
@@ -117,16 +124,17 @@ def is_english(text: str, min_chars: int = 2) -> bool:
 class SubtitleCorrector:
     """Helper class to hold the loaded model and run corrections."""
     def __init__(self, model_name: str, adapter_path: Path | None = None, fused: bool = True, temp: float = 0.1):
-        from mlx_lm import load
         from mlx_lm.sample_utils import make_sampler
 
         self.fused = fused
         t0 = time.time()
         if fused:
             console.print(f"[dim]Loading fused model {model_name}...[/dim]")
-            self.model, self.tokenizer = load(model_name)
+            self.model, self.tokenizer = load_mlx_model(model_name)
         else:
             console.print(f"[dim]Loading model {model_name} with adapter {adapter_path}...[/dim]")
+            from mlx_lm import load
+
             self.model, self.tokenizer = load(model_name, adapter_path=str(adapter_path))
         console.print(f"[dim]Model loaded in {time.time() - t0:.1f}s[/dim]")
         self.sampler = make_sampler(temp=temp)

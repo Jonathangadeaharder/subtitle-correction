@@ -198,11 +198,24 @@ def create_dataset_impl(
     console.print(f"[bold green]Dataset created successfully at {dataset_file} with {len(dataset_entries)} slices![/bold green]")
 
 
+def normalize_for_compare(text: str) -> str:
+    from .alignment_quality import normalize_for_compare as _norm
+
+    return _norm(text)
+
+
+def classify_eval_entry(entry: dict) -> str:
+    from .alignment_quality import classify_eval_entry as _classify
+
+    return _classify(entry)
+
+
 def evaluate_model_impl(
     model: str = "mlx-community/Qwen3-4B-4bit",
     adapter_path: Path | None = None,
     fused: bool = False,
     dataset_path: Path = Path(__file__).parent.parent / "evaluation" / "dataset.jsonl",
+    limit: int | None = None,
 ) -> None:
     """Evaluate subtitle corrector model on the generated audio slice dataset."""
     if not dataset_path.exists():
@@ -221,25 +234,22 @@ def evaluate_model_impl(
         console.print("[red]Evaluation dataset is empty[/red]")
         return
 
+    if limit is not None:
+        entries = entries[:limit]
+
     console.print(f"[bold]Evaluating model on {len(entries)} test cases...[/bold]")
-    
-    # Initialize corrector
+
     corrector = SubtitleCorrector(model, adapter_path, fused=fused)
 
     stats = {
-        "error_cases": {
-            "total": 0,
-            "corrected": 0,
-            "unchanged": 0,
-            "worsened": 0,
-        },
-        "identity_cases": {
-            "total": 0,
-            "unchanged": 0,
-            "changed": 0,
-        },
+        "error_cases": {"total": 0, "corrected": 0, "unchanged": 0, "worsened": 0},
+        "identity_cases": {"total": 0, "unchanged": 0, "changed": 0},
         "wer_before": [],
         "wer_after": [],
+        "no_reference_excluded": 0,
+        "misaligned_excluded": 0,
+        "lyrics_excluded": 0,
+        "in_scope_errors": {"total": 0, "corrected": 0, "unchanged": 0, "worsened": 0},
     }
 
     table = Table(title="Sample Corrections")
@@ -251,52 +261,76 @@ def evaluate_model_impl(
 
     sample_count = 0
 
+    def _print_bucket(bucket: dict) -> None:
+        total = bucket["total"]
+        if not total:
+            return
+        labels = {
+            "corrected": "Corrected/Improved",
+            "unchanged": "Unchanged",
+            "worsened": "Worsened",
+        }
+        console.print(f"  Total: {total}")
+        for key, label in labels.items():
+            count = bucket[key]
+            console.print(f"  {label}: {count} ({count / (total + 1e-6):.2%})")
+
     for i, entry in enumerate(entries, 1):
         whisper = entry["whisper_text"]
         target = entry["ground_truth"]
-        # Reference = aligned OpenSubtitles text (= ground_truth in eval dataset)
-        reference = entry.get("reference", target)
+        reference = entry.get("reference")
+        scope = entry.get("eval_scope") or classify_eval_entry(entry)
+
+        if entry["has_error"]:
+            if scope == "no_reference":
+                stats["no_reference_excluded"] += 1
+                continue
+            if scope == "misaligned":
+                stats["misaligned_excluded"] += 1
+                continue
+            if scope == "lyrics":
+                stats["lyrics_excluded"] += 1
+                continue
 
         corrected = corrector.correct_line(whisper, reference=reference)
 
         wer_b = calculate_wer(target, whisper)
         wer_a = calculate_wer(target, corrected)
-
-        
         stats["wer_before"].append(wer_b)
         stats["wer_after"].append(wer_a)
 
-        def clean_str(s):
-            return re.sub(r'[^\w\s]', '', s.lower()).strip()
-        
-        w_clean = clean_str(whisper)
-        t_clean = clean_str(target)
-        c_clean = clean_str(corrected)
+        w_clean = normalize_for_compare(whisper)
+        t_clean = normalize_for_compare(target)
+        c_clean = normalize_for_compare(corrected)
 
         if entry["has_error"]:
+            in_scope = scope == "in_scope"
             stats["error_cases"]["total"] += 1
+            if in_scope:
+                stats["in_scope_errors"]["total"] += 1
+
             if c_clean == t_clean:
-                stats["error_cases"]["corrected"] += 1
+                outcome = "corrected"
             elif c_clean == w_clean:
-                stats["error_cases"]["unchanged"] += 1
+                outcome = "unchanged"
             else:
                 dist_before = Levenshtein_distance(w_clean, t_clean)
                 dist_after = Levenshtein_distance(c_clean, t_clean)
-                if dist_after < dist_before:
-                    stats["error_cases"]["corrected"] += 1
-                else:
-                    stats["error_cases"]["worsened"] += 1
-            if sample_count < 10:
-                    table.add_row(entry["id"], whisper, reference, corrected, target)
-                    sample_count += 1
+                outcome = "corrected" if dist_after < dist_before else "worsened"
 
+            stats["error_cases"][outcome] += 1
+            if in_scope:
+                stats["in_scope_errors"][outcome] += 1
+
+            if sample_count < 10:
+                table.add_row(entry["id"], whisper, reference or "", corrected, target)
+                sample_count += 1
         else:
             stats["identity_cases"]["total"] += 1
             if c_clean == w_clean:
                 stats["identity_cases"]["unchanged"] += 1
             else:
                 stats["identity_cases"]["changed"] += 1
-
 
         if i % 10 == 0 or i == len(entries):
             console.print(f"  Processed {i}/{len(entries)}...")
@@ -305,31 +339,41 @@ def evaluate_model_impl(
     console.print(table)
     console.print("\n")
 
-    # Summarize results
     total_wer_b = sum(stats["wer_before"]) / len(stats["wer_before"])
     total_wer_a = sum(stats["wer_after"]) / len(stats["wer_after"])
-    
+
     console.print("[bold cyan]=========================================[/bold cyan]")
     console.print("[bold cyan]          EVALUATION REPORT              [/bold cyan]")
     console.print("[bold cyan]=========================================[/bold cyan]")
-    
+
     console.print(f"Total Test Cases: {len(entries)}")
+    console.print(f"Excluded (no reference field): {stats['no_reference_excluded']}")
+    console.print(f"Excluded (misaligned, out of scope): {stats['misaligned_excluded']}")
+    console.print(f"Excluded (lyrics/music, out of scope): {stats['lyrics_excluded']}")
     console.print(f"Word Error Rate (WER) Before: {total_wer_b:.2%}")
     console.print(f"Word Error Rate (WER) After:  {total_wer_a:.2%}")
-    console.print(f"Relative WER Improvement:     {(total_wer_b - total_wer_a) / (total_wer_b + 1e-6):.2%}")
+    console.print(
+        f"Relative WER Improvement:     {(total_wer_b - total_wer_a) / (total_wer_b + 1e-6):.2%}"
+    )
     console.print("")
-    
-    err_stats = stats["error_cases"]
-    console.print("[bold]Error Correction (Targeting Speech Errors):[/bold]")
-    console.print(f"  Total Error Cases: {err_stats['total']}")
-    console.print(f"  Successfully Corrected/Improved: {err_stats['corrected']} ({err_stats['corrected']/(err_stats['total']+1e-6):.2%})")
-    console.print(f"  Unchanged: {err_stats['unchanged']} ({err_stats['unchanged']/(err_stats['total']+1e-6):.2%})")
-    console.print(f"  Worsened: {err_stats['worsened']} ({err_stats['worsened']/(err_stats['total']+1e-6):.2%})")
+
+    console.print("[bold]In-Scope Mishearing Correction (primary metric):[/bold]")
+    _print_bucket(stats["in_scope_errors"])
     console.print("")
-    
+
+    console.print("[bold]All Scored Error Cases:[/bold]")
+    _print_bucket(stats["error_cases"])
+    console.print("")
+
     id_stats = stats["identity_cases"]
     console.print("[bold]Stability (Identity Preservation):[/bold]")
     console.print(f"  Total Identity Cases: {id_stats['total']}")
-    console.print(f"  Preserved (Unchanged): {id_stats['unchanged']} ({id_stats['unchanged']/(id_stats['total']+1e-6):.2%})")
-    console.print(f"  Corrupted (Wrongly Changed): {id_stats['changed']} ({id_stats['changed']/(id_stats['total']+1e-6):.2%})")
+    console.print(
+        f"  Preserved (Unchanged): {id_stats['unchanged']} "
+        f"({id_stats['unchanged'] / (id_stats['total'] + 1e-6):.2%})"
+    )
+    console.print(
+        f"  Corrupted (Wrongly Changed): {id_stats['changed']} "
+        f"({id_stats['changed'] / (id_stats['total'] + 1e-6):.2%})"
+    )
     console.print("[bold cyan]=========================================[/bold cyan]")

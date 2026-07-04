@@ -3,9 +3,11 @@ Generates targeted synthetic training pairs to fix specific gaps:
 1. Preservation of line breaks (\\n) from Reference.
 2. Preservation of music notes (♪) from Reference.
 3. Plurality/grammar agreement with Reference (e.g. uncle -> uncles).
-Appends these pairs to /Users/jonathangadeaharder/Downloads/.subcache/training_pairs.jsonl.
+Appends these pairs to the configured subcache training_pairs.jsonl.
 """
+import argparse
 import json
+import os
 from pathlib import Path
 
 TARGETED_PAIRS = [
@@ -237,10 +239,30 @@ for w, r, gt in plurality_templates:
 
 all_targeted = TARGETED_PAIRS + extra_pairs
 
-# Append to training_pairs.jsonl
-input_path = Path.home() / "Downloads" / ".subcache" / "training_pairs.jsonl"
-with open(input_path, "a") as f:
-    for pair in all_targeted:
-        f.write(json.dumps(pair, ensure_ascii=False) + "\n")
 
-print(f"Successfully appended {len(all_targeted)} targeted synthetic pairs to training_pairs.jsonl")
+def _default_subcache() -> Path:
+    return Path(os.getenv("SUBTITLE_SUBCACHE", Path.home() / "Downloads" / ".subcache"))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--subcache", type=Path, default=_default_subcache())
+    parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+
+    output_path = args.output or args.subcache / "training_pairs.jsonl"
+    if args.dry_run:
+        print(f"Would append {len(all_targeted)} targeted synthetic pairs to {output_path}")
+        return
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a", encoding="utf-8") as f:
+        for pair in all_targeted:
+            f.write(json.dumps(pair, ensure_ascii=False) + "\n")
+
+    print(f"Successfully appended {len(all_targeted)} targeted synthetic pairs to {output_path}")
+
+
+if __name__ == "__main__":
+    main()

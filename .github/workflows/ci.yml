@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: [self-hosted, macOS, ARM64, VidiomTM]
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: uv run --with ruff ruff check .
+      - run: uv run --with pytest pytest -q
+      - run: uv run python -m compileall subtitle_correction

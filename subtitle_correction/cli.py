@@ -1,3 +1,4 @@
+import os
 import re
 from pathlib import Path
 import typer
@@ -10,6 +11,12 @@ app = typer.Typer(help="Unified Subtitle Correction Command-Line Interface")
 
 # Sub-typers or sub-commands setup
 TV_EPISODE_RE = re.compile(r'[._ -]S\d+E\d+[._ -]', re.IGNORECASE)
+
+
+def _default_corrector_model() -> Path:
+    repo_default = Path(__file__).resolve().parents[1] / "runs" / "subtitle-corrector-4b-fused"
+    return Path(os.getenv("SUBTITLE_CORRECTOR_MODEL", str(repo_default)))
+
 
 # --- ALIGN COMMANDS ---
 @app.command(name="align")
@@ -102,7 +109,7 @@ def pipeline_cmd(
     cache_dir: Path = typer.Option(None, "--cache-dir", help="Cache directory"),
     tv_only: bool = typer.Option(True, "--tv-only/--all", help="Only process TV episodes (SxxExx pattern)"),
     correct: bool = typer.Option(False, "--correct", help="Apply MLX corrector to Whisper output"),
-    corrector_model: str = typer.Option("/Users/jonathangadeaharder/projects/vidiomtm/subtitle-correction/runs/subtitle-corrector-4b-fused", "--corrector-model", help="Path to fused MLX corrector model"),
+    corrector_model: Path = typer.Option(_default_corrector_model(), "--corrector-model", help="Path to fused MLX corrector model"),
     filter_hallucinations: bool = typer.Option(True, "--filter-hallucinations/--no-filter-hallucinations", help="Filter Whisper hallucinations (VAD + confidence + heuristics)"),
 ) -> None:
     """Run the batch processing pipeline (Audio extraction + Whisper + OpenSubtitles + Alignment)."""
@@ -152,7 +159,7 @@ def pipeline_cmd(
             result = process_file(
                 mp4, cache_root, language=lang,
                 skip_existing=not no_skip, scraper=scraper,
-                correct_whisper=correct, corrector_model=corrector_model,
+                correct_whisper=correct, corrector_model=str(corrector_model),
                 filter_hallucinations=filter_hallucinations,
             )
             status = result["status"]
@@ -285,17 +292,41 @@ def create_dataset_cmd(
 @app.command(name="evaluate")
 def evaluate_cmd(
     model: str = typer.Option("mlx-community/gemma-4-e4b-it-4bit", "--model", "-m", help="Base model"),
-
-
-
-
     adapter_path: Path = typer.Option(None, "--adapter-path", "-a", help="LoRA adapter path"),
     fused: bool = typer.Option(True, "--fused/--adapter", help="Use fused model or adapter"),
     dataset_path: Path = typer.Option(Path(__file__).parent.parent / "evaluation" / "dataset.jsonl", "--dataset-path", help="Dataset path"),
+    limit: int | None = typer.Option(None, "--limit", help="Evaluate only the first N cases"),
 ) -> None:
     """Evaluate correction accuracy on the created slice dataset."""
     from .evaluate import evaluate_model_impl
-    evaluate_model_impl(model, adapter_path, fused, dataset_path)
+    evaluate_model_impl(model, adapter_path, fused, dataset_path, limit)
+
+
+@app.command(name="srt-from-reference")
+def srt_from_reference_cmd(
+    reference: Path = typer.Option(..., "--reference", "-r", help="Reference prose or markdown file"),
+    whisper_srt: Path = typer.Option(..., "--whisper-srt", "-w", help="Whisper SRT with cue timing"),
+    out: Path = typer.Option(..., "--out", "-o", help="Output corrected SRT path"),
+) -> None:
+    """Deterministic reference alignment onto Whisper cue timing (no LLM)."""
+    from .srt_from_reference import align_reference_to_srt
+
+    align_reference_to_srt(reference.read_text(encoding="utf-8"), whisper_srt, out)
+    console.print(f"[green]Wrote {out}[/green]")
+
+
+@app.command(name="correct-reference-free")
+def correct_reference_free_cmd(
+    input_srt: Path = typer.Option(..., "--input", "-i", help="Whisper SRT to correct"),
+    output: Path = typer.Option(..., "--output", "-o", help="Output SRT path"),
+    model: str = typer.Option("mlx-community/gemma-4-e4b-it-4bit", "--model", "-m", help="Base instruct model"),
+    temp: float = typer.Option(0.0, "--temp", help="Sampling temperature"),
+) -> None:
+    """Correct German Whisper subtitles using neighboring cue context (no reference)."""
+    from .reference_free import correct_srt
+
+    changed, total = correct_srt(input_srt, output, model_name=model, temp=temp)
+    console.print(f"[green]Done: {changed}/{total} cues changed → {output}[/green]")
 
 
 if __name__ == "__main__":

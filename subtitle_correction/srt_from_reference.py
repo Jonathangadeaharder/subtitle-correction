@@ -16,6 +16,7 @@ Invariants enforced by the asserts in ``align_reference_to_srt``:
 from __future__ import annotations
 
 import difflib
+import os
 import re
 from pathlib import Path
 
@@ -23,6 +24,12 @@ import pysrt
 
 _TOKEN_RE = re.compile(r"\S+")
 _NORM_RE = re.compile(r"[^0-9a-zäöüáéíóúàèïü]")
+
+
+def _default_gretel_root() -> Path:
+    return Path(
+        os.getenv("GRETEL_ROOT", Path(__file__).resolve().parents[2] / "Gretel")
+    )
 
 
 def _tokens(text: str) -> list[str]:
@@ -225,26 +232,19 @@ def _main() -> None:
     p.add_argument(
         "--reference",
         type=Path,
-        default=Path(
-            "/Users/jonathangadeaharder/projects/vidiomtm/Gretel/"
-            "outputs/narration/ch01_der_endlose_regen.md"
-        ),
+        default=_default_gretel_root() / "outputs/narration/ch01_der_endlose_regen.md",
     )
     p.add_argument(
         "--whisper-srt",
         type=Path,
-        default=Path(
-            "/Users/jonathangadeaharder/projects/vidiomtm/Gretel/"
-            "shot_production/chapter1/outputs/ch1_transcript.srt"
-        ),
+        default=_default_gretel_root()
+        / "shot_production/chapter1/outputs/ch1_transcript.srt",
     )
     p.add_argument(
         "--out",
         type=Path,
-        default=Path(
-            "/Users/jonathangadeaharder/projects/vidiomtm/Gretel/"
-            "shot_production/chapter1/outputs/ch1_transcript.corrected.srt"
-        ),
+        default=_default_gretel_root()
+        / "shot_production/chapter1/outputs/ch1_transcript.corrected.srt",
     )
     args = p.parse_args()
 
