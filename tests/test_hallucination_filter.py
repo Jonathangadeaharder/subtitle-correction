@@ -35,8 +35,7 @@ def test_srt_block_duration() -> None:
 def test_parse_srt(tmp_path: Path) -> None:
     srt = tmp_path / "in.srt"
     srt.write_text(
-        "1\n00:00:01,000 --> 00:00:02,500\nhello world\n\n"
-        "2\n00:00:02,500 --> 00:00:04,000\nbye\n",
+        "1\n00:00:01,000 --> 00:00:02,500\nhello world\n\n2\n00:00:02,500 --> 00:00:04,000\nbye\n",
         encoding="utf-8",
     )
     blocks = parse_srt(srt)
@@ -62,18 +61,19 @@ def test_parse_srt_with_confidence_no_json(tmp_path: Path) -> None:
 def test_parse_srt_with_confidence_merges(tmp_path: Path) -> None:
     srt = tmp_path / "in.srt"
     srt.write_text(
-        "1\n00:00:01,000 --> 00:00:02,000\nhello\n\n"
-        "2\n00:00:02,000 --> 00:00:03,000\nworld\n",
+        "1\n00:00:01,000 --> 00:00:02,000\nhello\n\n2\n00:00:02,000 --> 00:00:03,000\nworld\n",
         encoding="utf-8",
     )
     json_path = tmp_path / "conf.json"
     json_path.write_text(
-        json.dumps({
-            "segments": [
-                {"no_speech_prob": 0.9, "avg_logprob": -1.5, "compression_ratio": 3.0},
-                {"no_speech_prob": 0.1, "avg_logprob": -0.3, "compression_ratio": 1.2},
-            ]
-        }),
+        json.dumps(
+            {
+                "segments": [
+                    {"no_speech_prob": 0.9, "avg_logprob": -1.5, "compression_ratio": 3.0},
+                    {"no_speech_prob": 0.1, "avg_logprob": -0.3, "compression_ratio": 1.2},
+                ]
+            }
+        ),
         encoding="utf-8",
     )
     blocks = parse_srt_with_confidence(srt, json_path)
@@ -142,8 +142,13 @@ def test_filter_by_confidence_keeps_low_no_speech_even_with_other_reasons() -> N
     # (the drop only triggers when no_speech > threshold)
     blocks = [
         SrtBlock(
-            index=1, start_sec=0, end_sec=1, text="x",
-            no_speech_prob=0.1, avg_logprob=-2.0, compression_ratio=3.0,
+            index=1,
+            start_sec=0,
+            end_sec=1,
+            text="x",
+            no_speech_prob=0.1,
+            avg_logprob=-2.0,
+            compression_ratio=3.0,
         ),
     ]
     stats = FilterStats()
@@ -266,7 +271,12 @@ def test_filter_hallucinations_full_pipeline(tmp_path: Path) -> None:
     out = tmp_path / "out.srt"
     audio = tmp_path / "a.wav"  # non-existent -> VAD branch skipped
     stats = filter_hallucinations(
-        srt, audio, out, lang="en", enable_vad=False, enable_confidence=False,
+        srt,
+        audio,
+        out,
+        lang="en",
+        enable_vad=False,
+        enable_confidence=False,
     )
     assert stats.total == 2
     assert stats.kept == 1  # the "thank you" phrase dropped
@@ -282,16 +292,26 @@ def test_filter_hallucinations_with_confidence_json(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     json_path = tmp_path / "conf.json"
-    json_path.write_text(json.dumps({
-        "segments": [
-            {"no_speech_prob": 0.1, "avg_logprob": -0.2, "compression_ratio": 1.0},
-            {"no_speech_prob": 0.9, "avg_logprob": -2.0, "compression_ratio": 3.0},
-        ]
-    }), encoding="utf-8")
+    json_path.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {"no_speech_prob": 0.1, "avg_logprob": -0.2, "compression_ratio": 1.0},
+                    {"no_speech_prob": 0.9, "avg_logprob": -2.0, "compression_ratio": 3.0},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     out = tmp_path / "out.srt"
     stats = filter_hallucinations(
-        srt, tmp_path / "noaudio.wav", out, json_path=json_path,
-        lang="en", enable_vad=False, enable_confidence=True,
+        srt,
+        tmp_path / "noaudio.wav",
+        out,
+        json_path=json_path,
+        lang="en",
+        enable_vad=False,
+        enable_confidence=True,
     )
     assert stats.dropped_confidence == 1
     assert stats.kept == 1

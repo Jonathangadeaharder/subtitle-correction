@@ -4,7 +4,6 @@ import json
 import sys
 import types
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -24,6 +23,7 @@ from subtitle_correction.pipeline import (
 
 
 # ---------------- safe_dirname ----------------
+
 
 def test_safe_dirname_strips_special_chars() -> None:
     # Uses Path.stem -> extension dropped
@@ -45,6 +45,7 @@ def test_safe_dirname_strips_leading_trailing_underscores() -> None:
 
 # ---------------- detect_language_from_filename ----------------
 
+
 def test_detect_language_german_keywords() -> None:
     assert detect_language_from_filename("Movie.GERMAN.dub.mp4") == "de"
     assert detect_language_from_filename("Film.Deutsch.mp4") == "de"
@@ -62,6 +63,7 @@ def test_detect_language_returns_none_when_unknown() -> None:
 
 # ---------------- FileMetadata ----------------
 
+
 def test_file_metadata_load_creates_default_when_missing(tmp_path: Path) -> None:
     meta = FileMetadata(tmp_path / "work", "movie.mp4")
     meta.load()
@@ -75,13 +77,18 @@ def test_file_metadata_load_creates_default_when_missing(tmp_path: Path) -> None
 def test_file_metadata_load_existing(tmp_path: Path) -> None:
     work = tmp_path / "work"
     work.mkdir()
-    (work / "metadata.json").write_text(json.dumps({
-        "status": PipelineStep.ALIGNED,
-        "whisper_lang": "en",
-        "subtitle_lang": "de",
-        "alignment_score": 0.8,
-        "error": "",
-    }), encoding="utf-8")
+    (work / "metadata.json").write_text(
+        json.dumps(
+            {
+                "status": PipelineStep.ALIGNED,
+                "whisper_lang": "en",
+                "subtitle_lang": "de",
+                "alignment_score": 0.8,
+                "error": "",
+            }
+        ),
+        encoding="utf-8",
+    )
     meta = FileMetadata(work, "movie.mp4")
     meta.load()
     assert meta.status == PipelineStep.ALIGNED
@@ -140,6 +147,7 @@ def test_needs_step_unknown_status(tmp_path: Path) -> None:
 
 # ---------------- extract_audio ----------------
 
+
 def test_extract_audio_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     mp4 = tmp_path / "in.mp4"
     mp4.write_bytes(b"\x00")
@@ -151,9 +159,11 @@ def test_extract_audio_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         class _R:
             returncode = 0
             stderr = ""
+
         return _R()
 
     import subtitle_correction.pipeline as pl
+
     monkeypatch.setattr(pl.subprocess, "run", _fake_run, raising=False)
     assert extract_audio(mp4, wav) == wav
 
@@ -165,6 +175,7 @@ def test_extract_audio_failure_raises(tmp_path: Path, monkeypatch: pytest.Monkey
         class _R:
             returncode = 1
             stderr = "boom"
+
         return _R()
 
     monkeypatch.setattr(pl.subprocess, "run", _fake_run, raising=False)
@@ -174,8 +185,10 @@ def test_extract_audio_failure_raises(tmp_path: Path, monkeypatch: pytest.Monkey
 
 # ---------------- run_correction ----------------
 
+
 def test_run_correction_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import subtitle_correction.pipeline as pl
+
     inp = tmp_path / "in.srt"
     ref = tmp_path / "ref.srt"
     out = tmp_path / "out.srt"
@@ -188,6 +201,7 @@ def test_run_correction_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         class _R:
             returncode = 0
             stderr = ""
+
         return _R()
 
     monkeypatch.setattr(pl.subprocess, "run", _fake_run, raising=False)
@@ -201,6 +215,7 @@ def test_run_correction_failure_raises(tmp_path: Path, monkeypatch: pytest.Monke
         class _R:
             returncode = 1
             stderr = "correction failed"
+
         return _R()
 
     monkeypatch.setattr(pl.subprocess, "run", _fake_run, raising=False)
@@ -210,6 +225,7 @@ def test_run_correction_failure_raises(tmp_path: Path, monkeypatch: pytest.Monke
 
 def test_run_correction_adapter_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import subtitle_correction.pipeline as pl
+
     captured: dict = {}
     inp = tmp_path / "in.srt"
     ref = tmp_path / "ref.srt"
@@ -224,6 +240,7 @@ def test_run_correction_adapter_mode(tmp_path: Path, monkeypatch: pytest.MonkeyP
         class _R:
             returncode = 0
             stderr = ""
+
         return _R()
 
     monkeypatch.setattr(pl.subprocess, "run", _fake_run, raising=False)
@@ -233,8 +250,10 @@ def test_run_correction_adapter_mode(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
 # ---------------- run_alignment ----------------
 
+
 def test_run_alignment_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import subtitle_correction.pipeline as pl
+
     whisper = tmp_path / "w.srt"
     sub = tmp_path / "s.srt"
     out = tmp_path / "o.srt"
@@ -247,6 +266,7 @@ def test_run_alignment_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
         class _R:
             returncode = 0
             stderr = ""
+
         return _R()
 
     monkeypatch.setattr(pl.subprocess, "run", _fake_run, raising=False)
@@ -260,6 +280,7 @@ def test_run_alignment_failure_raises(tmp_path: Path, monkeypatch: pytest.Monkey
         class _R:
             returncode = 1
             stderr = "align failed"
+
         return _R()
 
     monkeypatch.setattr(pl.subprocess, "run", _fake_run, raising=False)
@@ -268,6 +289,7 @@ def test_run_alignment_failure_raises(tmp_path: Path, monkeypatch: pytest.Monkey
 
 
 # ---------------- run_whisper ----------------
+
 
 def test_run_whisper_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     wav = tmp_path / "a.wav"
@@ -281,8 +303,16 @@ def test_run_whisper_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
     class _Seg:
         text = "hello"
-        segments = [{"text": "hi", "start": 0, "end": 1, "no_speech_prob": 0.1,
-                     "avg_logprob": -0.2, "compression_ratio": 1.0}]
+        segments = [
+            {
+                "text": "hi",
+                "start": 0,
+                "end": 1,
+                "no_speech_prob": 0.1,
+                "avg_logprob": -0.2,
+                "compression_ratio": 1.0,
+            }
+        ]
 
     def _fake_generate_transcription(**kwargs):
         # Write the srt so output_srt.exists() is True
@@ -304,7 +334,9 @@ def test_run_whisper_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert data["segments"][0]["no_speech_prob"] == 0.1
 
 
-def test_run_whisper_no_srt_produced_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_whisper_no_srt_produced_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     wav = tmp_path / "a.wav"
     wav.write_bytes(b"\x00")
     srt = tmp_path / "out.srt"
@@ -385,6 +417,7 @@ def test_run_whisper_no_segments_no_json(tmp_path: Path, monkeypatch: pytest.Mon
 
 # ---------------- run_hallucination_filter ----------------
 
+
 def test_run_hallucination_filter(tmp_path: Path) -> None:
     srt = tmp_path / "in.srt"
     srt.write_text(
@@ -401,6 +434,7 @@ def test_run_hallucination_filter(tmp_path: Path) -> None:
 
 # ---------------- run_opensubtitles_download ----------------
 
+
 class _FakeScraper:
     def __init__(self, results: list, download_path: Path | None = None):
         self._results = results
@@ -416,7 +450,9 @@ class _FakeScraper:
     def download(self, sub, output_dir):
         self.downloaded.append((sub, output_dir))
         if self._download_path is not None:
-            self._download_path.write_text("1\n00:00:01,000 --> 00:00:02,000\nhi\n", encoding="utf-8")
+            self._download_path.write_text(
+                "1\n00:00:01,000 --> 00:00:02,000\nhi\n", encoding="utf-8"
+            )
             return self._download_path
         return output_dir / "failed.srt"
 
@@ -426,6 +462,7 @@ class _FakeScraper:
 
 def test_run_opensubtitles_download_success(tmp_path: Path) -> None:
     from subtitle_correction.models import SubtitleResult
+
     dl = tmp_path / "dl.srt"
     scraper = _FakeScraper(
         results=[SubtitleResult(id="1", name="Movie", language="en")],
@@ -444,6 +481,7 @@ def test_run_opensubtitles_download_no_results(tmp_path: Path) -> None:
 
 def test_run_opensubtitles_download_empty_file_returns_none(tmp_path: Path) -> None:
     from subtitle_correction.models import SubtitleResult
+
     scraper = _FakeScraper(
         results=[SubtitleResult(id="1", name="Movie", language="en")],
         download_path=None,  # returns failed.srt (empty)
@@ -456,15 +494,20 @@ def test_run_opensubtitles_download_exception_returns_none(tmp_path: Path) -> No
     class _Boom:
         def search(self, *a, **k):
             raise RuntimeError("network down")
+
         def close(self):
             pass
+
     out = run_opensubtitles_download("Movie.2020.mp4", "en", tmp_path, scraper=_Boom())
     assert out is None
 
 
-def test_run_opensubtitles_download_creates_own_scraper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_opensubtitles_download_creates_own_scraper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # When scraper=None, an OpenSubtitlesScraper is constructed; mock its class
     from subtitle_correction.models import SubtitleResult
+
     dl = tmp_path / "own.srt"
     fake = _FakeScraper(
         results=[SubtitleResult(id="1", name="Movie", language="en")],
@@ -478,6 +521,7 @@ def test_run_opensubtitles_download_creates_own_scraper(tmp_path: Path, monkeypa
 
 def test_run_opensubtitles_download_filters_and_picks_title_match(tmp_path: Path) -> None:
     from subtitle_correction.models import SubtitleResult
+
     dl = tmp_path / "best.srt"
     results = [
         SubtitleResult(id="1", name="Other Title", language="en"),
@@ -492,21 +536,29 @@ def test_run_opensubtitles_download_filters_and_picks_title_match(tmp_path: Path
 
 # ---------------- process_file ----------------
 
+
 def test_process_file_skips_complete(tmp_path: Path) -> None:
     cache = tmp_path / "cache"
     work = cache / safe_dirname("movie.mp4")
     work.mkdir(parents=True)
-    (work / "metadata.json").write_text(json.dumps({
-        "status": PipelineStep.PAIRED,
-        "source_file": "movie.mp4",
-    }), encoding="utf-8")
+    (work / "metadata.json").write_text(
+        json.dumps(
+            {
+                "status": PipelineStep.PAIRED,
+                "source_file": "movie.mp4",
+            }
+        ),
+        encoding="utf-8",
+    )
     mp4 = tmp_path / "movie.mp4"
     mp4.write_bytes(b"\x00")
     result = process_file(mp4, cache, skip_existing=True)
     assert result["status"] == "skipped"
 
 
-def test_process_file_no_subtitle_returns_no_subtitle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_file_no_subtitle_returns_no_subtitle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cache = tmp_path / "cache"
     mp4 = tmp_path / "movie.GERMAN.mp4"
     mp4.write_bytes(b"\x00")
@@ -536,13 +588,14 @@ def test_process_file_no_subtitle_returns_no_subtitle(tmp_path: Path, monkeypatc
     assert result["status"] == "no_subtitle"
 
 
-def test_process_file_full_pipeline_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_file_full_pipeline_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cache = tmp_path / "cache"
     mp4 = tmp_path / "movie.english.mp4"
     mp4.write_bytes(b"\x00")
 
     import subtitle_correction.pipeline as pl
-    from subtitle_correction.models import SubtitleResult
 
     def _fake_extract_audio(mp4_path, out_wav):
         out_wav.write_bytes(b"\x00")
@@ -576,7 +629,9 @@ def test_process_file_full_pipeline_success(tmp_path: Path, monkeypatch: pytest.
     assert result["status"] == PipelineStep.PAIRED
 
 
-def test_process_file_alignment_missing_srt_returns_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_file_alignment_missing_srt_returns_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cache = tmp_path / "cache"
     mp4 = tmp_path / "movie.english.mp4"
     mp4.write_bytes(b"\x00")
@@ -607,7 +662,9 @@ def test_process_file_alignment_missing_srt_returns_failed(tmp_path: Path, monke
     assert result["status"] == "alignment_failed"
 
 
-def test_process_file_exception_returns_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_file_exception_returns_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cache = tmp_path / "cache"
     mp4 = tmp_path / "movie.english.mp4"
     mp4.write_bytes(b"\x00")
@@ -624,7 +681,9 @@ def test_process_file_exception_returns_failed(tmp_path: Path, monkeypatch: pyte
     assert "extract failed" in result["error"]
 
 
-def test_process_file_language_mismatch_skips_pairs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_file_language_mismatch_skips_pairs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cache = tmp_path / "cache"
     mp4 = tmp_path / "movie.english.mp4"
     mp4.write_bytes(b"\x00")

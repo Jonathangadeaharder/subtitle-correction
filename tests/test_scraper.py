@@ -20,6 +20,7 @@ from subtitle_correction.scraper import (
 
 # ---------------- _solve_pow ----------------
 
+
 def test_solve_pow_difficulty_even() -> None:
     # difficulty 0 -> first nonce (0) works since no full bytes required
     digest_hex, nonce = _solve_pow("data", 0)
@@ -33,6 +34,7 @@ def test_solve_pow_difficulty_two_bytes() -> None:
     digest_hex, nonce = _solve_pow("randomprefix", 4)
     # Verify the solution
     import hashlib
+
     digest = hashlib.sha256(f"randomprefix{nonce}".encode()).digest()
     assert digest[0] == 0 and digest[1] == 0
     assert digest_hex == digest.hex()
@@ -42,12 +44,14 @@ def test_solve_pow_odd_difficulty_half_byte() -> None:
     # difficulty 5 -> 2 full zero bytes + high nibble of 3rd byte must be 0
     digest_hex, nonce = _solve_pow("oddtest", 5)
     import hashlib
+
     digest = hashlib.sha256(f"oddtest{nonce}".encode()).digest()
     assert digest[0] == 0 and digest[1] == 0
     assert (digest[2] >> 4) == 0
 
 
 # ---------------- constants ----------------
+
 
 def test_lang_code_map_has_common_languages() -> None:
     assert LANG_CODE_MAP["en"] == "eng"
@@ -107,6 +111,7 @@ def test_parse_search_results_falls_back_to_slug_for_title() -> None:
 
 # ---------------- _pick_best (pure) ----------------
 
+
 def test_pick_best_prefers_episode_label_match() -> None:
     # Both match episode label (+100); downloads break the tie.
     # id=1: 100 + min(5000//1000,20)=5 -> 105
@@ -150,9 +155,16 @@ def test_pick_best_empty_results_returns_first() -> None:
 
 # ---------------- Fake session helpers ----------------
 
+
 class _FakeResponse:
-    def __init__(self, *, status_code: int = 200, text: str = "", content: bytes = b"",
-                 headers: dict | None = None):
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        text: str = "",
+        content: bytes = b"",
+        headers: dict | None = None,
+    ):
         self.status_code = status_code
         self.text = text
         self.content = content
@@ -176,13 +188,16 @@ class _FakeSession:
         pass
 
 
-def _scraper_with_session(scraper: OpenSubtitlesScraper, session: _FakeSession) -> OpenSubtitlesScraper:
+def _scraper_with_session(
+    scraper: OpenSubtitlesScraper, session: _FakeSession
+) -> OpenSubtitlesScraper:
     scraper._session = session  # type: ignore[assignment]
     scraper._cf_passed = True
     return scraper
 
 
 # ---------------- download ----------------
+
 
 def test_download_no_id_returns_failed_srt(tmp_path: Path) -> None:
     scraper = _scraper_with_session(OpenSubtitlesScraper(), _FakeSession())
@@ -198,9 +213,11 @@ def test_download_extracts_zip(tmp_path: Path) -> None:
         z.writestr("movie.srt", "1\n00:00:01,000 --> 00:00:02,000\nhello\n")
     zip_bytes = buf.getvalue()
 
-    session = _FakeSession(responses=[
-        _FakeResponse(content=zip_bytes, headers={"Content-Type": "application/zip"}),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(content=zip_bytes, headers={"Content-Type": "application/zip"}),
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     sub = SubtitleResult(id="/en/subtitles/123/movie-en", name="Movie", language="en")
     out = scraper.download(sub, tmp_path)
@@ -213,9 +230,11 @@ def test_download_zip_with_no_srt_returns_failed(tmp_path: Path) -> None:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         z.writestr("readme.txt", "not an srt")
-    session = _FakeSession(responses=[
-        _FakeResponse(content=buf.getvalue(), headers={"Content-Type": "application/zip"}),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(content=buf.getvalue(), headers={"Content-Type": "application/zip"}),
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     sub = SubtitleResult(id="/en/subtitles/123/movie-en", name="Movie", language="en")
     out = scraper.download(sub, tmp_path)
@@ -224,13 +243,16 @@ def test_download_zip_with_no_srt_returns_failed(tmp_path: Path) -> None:
 
 def test_download_gzip_content(tmp_path: Path) -> None:
     import gzip
+
     srt_bytes = b"1\n00:00:01,000 --> 00:00:02,000\nhello\n"
     gz = gzip.compress(srt_bytes)
     # "application/gzip" contains "zip" so the zip branch runs first and fails
     # (not a real zip). Verifies graceful failure for gzip-as-zip confusion.
-    session = _FakeSession(responses=[
-        _FakeResponse(content=gz, headers={"Content-Type": "application/gzip"}),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(content=gz, headers={"Content-Type": "application/gzip"}),
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     sub = SubtitleResult(id="/en/subtitles/123/movie-en", name="Movie", language="en")
     out = scraper.download(sub, tmp_path)
@@ -239,12 +261,15 @@ def test_download_gzip_content(tmp_path: Path) -> None:
 
 def test_download_gzip_by_magic_bytes(tmp_path: Path) -> None:
     import gzip
+
     srt_bytes = b"1\n00:00:01,000 --> 00:00:02,000\nhello\n"
     gz = gzip.compress(srt_bytes)
     # Content-Type doesn't say gzip but magic bytes do
-    session = _FakeSession(responses=[
-        _FakeResponse(content=gz, headers={"Content-Type": "application/octet-stream"}),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(content=gz, headers={"Content-Type": "application/octet-stream"}),
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     sub = SubtitleResult(id="/en/subtitles/123/movie-en", name="Movie", language="en")
     out = scraper.download(sub, tmp_path)
@@ -253,9 +278,11 @@ def test_download_gzip_by_magic_bytes(tmp_path: Path) -> None:
 
 def test_download_plain_srt_text(tmp_path: Path) -> None:
     text = "1\n00:00:01,000 --> 00:00:02,000\nhello world\n"
-    session = _FakeSession(responses=[
-        _FakeResponse(content=text.encode("utf-8"), headers={"Content-Type": "text/plain"}),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(content=text.encode("utf-8"), headers={"Content-Type": "text/plain"}),
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     sub = SubtitleResult(id="/en/subtitles/123/movie-en", name="Movie", language="en")
     out = scraper.download(sub, tmp_path)
@@ -263,9 +290,11 @@ def test_download_plain_srt_text(tmp_path: Path) -> None:
 
 
 def test_download_non_200_returns_failed(tmp_path: Path) -> None:
-    session = _FakeSession(responses=[
-        _FakeResponse(status_code=500, content=b"err"),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(status_code=500, content=b"err"),
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     sub = SubtitleResult(id="/en/subtitles/123/movie-en", name="Movie", language="en")
     out = scraper.download(sub, tmp_path)
@@ -273,9 +302,13 @@ def test_download_non_200_returns_failed(tmp_path: Path) -> None:
 
 
 def test_download_unexpected_content_returns_failed(tmp_path: Path) -> None:
-    session = _FakeSession(responses=[
-        _FakeResponse(content=b"random bytes", headers={"Content-Type": "application/octet-stream"}),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(
+                content=b"random bytes", headers={"Content-Type": "application/octet-stream"}
+            ),
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     sub = SubtitleResult(id="/en/subtitles/123/movie-en", name="Movie", language="en")
     out = scraper.download(sub, tmp_path)
@@ -284,9 +317,11 @@ def test_download_unexpected_content_returns_failed(tmp_path: Path) -> None:
 
 def test_download_anubis_not_passed_triggers_reauth(tmp_path: Path) -> None:
     # First call: 401 triggers anubis re-auth path
-    session = _FakeSession(responses=[
-        _FakeResponse(status_code=401, content=b"Making sure you"),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(status_code=401, content=b"Making sure you"),
+        ]
+    )
     scraper = OpenSubtitlesScraper()
     scraper._session = session  # type: ignore[assignment]
     scraper._cf_passed = False
@@ -300,10 +335,13 @@ def test_download_anubis_not_passed_triggers_reauth(tmp_path: Path) -> None:
 
 # ---------------- search ----------------
 
+
 def test_search_returns_results_when_passed() -> None:
-    session = _FakeSession(responses=[
-        _FakeResponse(text=_SEARCH_HTML),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(text=_SEARCH_HTML),
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     results = scraper.search("Movie", "en")
     # Search HTML has en + de results; filtering by "en" keeps only en
@@ -312,18 +350,22 @@ def test_search_returns_results_when_passed() -> None:
 
 
 def test_search_non_200_returns_empty() -> None:
-    session = _FakeSession(responses=[
-        _FakeResponse(status_code=500, text="err"),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(status_code=500, text="err"),
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     assert scraper.search("Movie", "en") == []
 
 
 def test_search_anubis_rate_limit_retry_then_success() -> None:
-    session = _FakeSession(responses=[
-        _FakeResponse(status_code=401, text="Making sure you"),
-        _FakeResponse(text=_SEARCH_HTML),  # retry succeeds
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(status_code=401, text="Making sure you"),
+            _FakeResponse(text=_SEARCH_HTML),  # retry succeeds
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     # Patch sleep to avoid real waits
     with patch("subtitle_correction.scraper.time.sleep"):
@@ -333,30 +375,37 @@ def test_search_anubis_rate_limit_retry_then_success() -> None:
 
 
 def test_search_anubis_reauth_failure_returns_empty() -> None:
-    session = _FakeSession(responses=[
-        _FakeResponse(status_code=401, text="Making sure you"),
-        _FakeResponse(status_code=401, text="Making sure you"),
-        _FakeResponse(status_code=401, text="Making sure you"),
-        _FakeResponse(status_code=401, text="Making sure you"),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(status_code=401, text="Making sure you"),
+            _FakeResponse(status_code=401, text="Making sure you"),
+            _FakeResponse(status_code=401, text="Making sure you"),
+            _FakeResponse(status_code=401, text="Making sure you"),
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     scraper._cf_passed = False
-    with patch("subtitle_correction.scraper.time.sleep"), \
-         patch.object(OpenSubtitlesScraper, "_pass_anubis", return_value=False):
+    with (
+        patch("subtitle_correction.scraper.time.sleep"),
+        patch.object(OpenSubtitlesScraper, "_pass_anubis", return_value=False),
+    ):
         assert scraper.search("Movie", "en") == []
 
 
 def test_search_filters_by_language() -> None:
     # HTML has en and de results; filtering by "en" keeps only en
-    session = _FakeSession(responses=[
-        _FakeResponse(text=_SEARCH_HTML),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(text=_SEARCH_HTML),
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     results = scraper.search("Movie", "en")
     assert all("en" in r.language for r in results)
 
 
 # ---------------- _pass_anubis ----------------
+
 
 def test_pass_anubis_already_passed_returns_true() -> None:
     scraper = OpenSubtitlesScraper()
@@ -365,9 +414,11 @@ def test_pass_anubis_already_passed_returns_true() -> None:
 
 
 def test_pass_anubis_no_challenge_200_returns_true() -> None:
-    session = _FakeSession(responses=[
-        _FakeResponse(status_code=200, text="normal page no challenge"),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(status_code=200, text="normal page no challenge"),
+        ]
+    )
     scraper = OpenSubtitlesScraper()
     scraper._session = session  # type: ignore[assignment]
     scraper._cf_passed = False
@@ -378,17 +429,21 @@ def test_pass_anubis_no_challenge_200_returns_true() -> None:
 def test_pass_anubis_with_challenge_solved() -> None:
     challenge_html = (
         '<script id="anubis_challenge" type="application/json">'
-        + json.dumps({
-            "challenge": {"id": "cid", "randomData": "rdata"},
-            "rules": {"difficulty": 0},
-        })
-        + '</script>'
+        + json.dumps(
+            {
+                "challenge": {"id": "cid", "randomData": "rdata"},
+                "rules": {"difficulty": 0},
+            }
+        )
+        + "</script>"
     )
     # First: challenge page; second: pass-challenge success; third: not needed
-    session = _FakeSession(responses=[
-        _FakeResponse(status_code=200, text=challenge_html),
-        _FakeResponse(status_code=200, text="success no making sure"),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(status_code=200, text=challenge_html),
+            _FakeResponse(status_code=200, text="success no making sure"),
+        ]
+    )
     scraper = OpenSubtitlesScraper()
     scraper._session = session  # type: ignore[assignment]
     scraper._cf_passed = False
@@ -397,9 +452,11 @@ def test_pass_anubis_with_challenge_solved() -> None:
 
 
 def test_pass_anubis_challenge_not_found_non200_returns_false() -> None:
-    session = _FakeSession(responses=[
-        _FakeResponse(status_code=403, text="forbidden"),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(status_code=403, text="forbidden"),
+        ]
+    )
     scraper = OpenSubtitlesScraper()
     scraper._session = session  # type: ignore[assignment]
     scraper._cf_passed = False
@@ -409,18 +466,22 @@ def test_pass_anubis_challenge_not_found_non200_returns_false() -> None:
 def test_pass_anubis_pass_challenge_fails_then_retry_succeeds() -> None:
     challenge_html = (
         '<script id="anubis_challenge" type="application/json">'
-        + json.dumps({
-            "challenge": {"id": "cid", "randomData": "rdata"},
-            "rules": {"difficulty": 0},
-        })
-        + '</script>'
+        + json.dumps(
+            {
+                "challenge": {"id": "cid", "randomData": "rdata"},
+                "rules": {"difficulty": 0},
+            }
+        )
+        + "</script>"
     )
     # pass-challenge returns 200 but "Making sure you"; retry of /en succeeds
-    session = _FakeSession(responses=[
-        _FakeResponse(status_code=200, text=challenge_html),
-        _FakeResponse(status_code=200, text="Making sure you"),
-        _FakeResponse(status_code=200, text="all good now"),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(status_code=200, text=challenge_html),
+            _FakeResponse(status_code=200, text="Making sure you"),
+            _FakeResponse(status_code=200, text="all good now"),
+        ]
+    )
     scraper = OpenSubtitlesScraper()
     scraper._session = session  # type: ignore[assignment]
     scraper._cf_passed = False
@@ -430,17 +491,21 @@ def test_pass_anubis_pass_challenge_fails_then_retry_succeeds() -> None:
 def test_pass_anubis_pass_challenge_fully_fails() -> None:
     challenge_html = (
         '<script id="anubis_challenge" type="application/json">'
-        + json.dumps({
-            "challenge": {"id": "cid", "randomData": "rdata"},
-            "rules": {"difficulty": 0},
-        })
-        + '</script>'
+        + json.dumps(
+            {
+                "challenge": {"id": "cid", "randomData": "rdata"},
+                "rules": {"difficulty": 0},
+            }
+        )
+        + "</script>"
     )
-    session = _FakeSession(responses=[
-        _FakeResponse(status_code=200, text=challenge_html),
-        _FakeResponse(status_code=403, text="still blocked"),
-        _FakeResponse(status_code=403, text="still blocked"),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(status_code=200, text=challenge_html),
+            _FakeResponse(status_code=403, text="still blocked"),
+            _FakeResponse(status_code=403, text="still blocked"),
+        ]
+    )
     scraper = OpenSubtitlesScraper()
     scraper._session = session  # type: ignore[assignment]
     scraper._cf_passed = False
@@ -448,6 +513,7 @@ def test_pass_anubis_pass_challenge_fully_fails() -> None:
 
 
 # ---------------- login / close ----------------
+
 
 def test_login_when_passed(tmp_path: Path) -> None:
     # ensure_cache_dir uses the isolated home from conftest
@@ -490,8 +556,10 @@ def test_close_no_session_is_noop() -> None:
 
 # ---------------- search_and_download ----------------
 
+
 def test_search_and_download_cache_hit(tmp_path: Path) -> None:
     from subtitle_correction.cache import add_cache_entry
+
     # Pre-populate cache with a valid srt
     srt = tmp_path / "cached.srt"
     srt.write_text("1\n00:00:01,000 --> 00:00:02,000\nhi\n", encoding="utf-8")
@@ -504,11 +572,15 @@ def test_search_and_download_cache_hit(tmp_path: Path) -> None:
 
 
 def test_search_and_download_finds_result(tmp_path: Path) -> None:
-    session = _FakeSession(responses=[
-        _FakeResponse(text=_SEARCH_HTML),  # search
-        _FakeResponse(content=b"1\n00:00:01,000 --> 00:00:02,000\nhi\n",
-                      headers={"Content-Type": "text/plain"}),  # download
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(text=_SEARCH_HTML),  # search
+            _FakeResponse(
+                content=b"1\n00:00:01,000 --> 00:00:02,000\nhi\n",
+                headers={"Content-Type": "text/plain"},
+            ),  # download
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     parsed = ParsedFilename(title="Movie", raw="movie.mkv")
     result = scraper.search_and_download(parsed, language="en", output_dir=tmp_path)
@@ -518,10 +590,12 @@ def test_search_and_download_finds_result(tmp_path: Path) -> None:
 
 def test_search_and_download_no_results_returns_none(tmp_path: Path) -> None:
     # search returns nothing, fallback search also nothing
-    session = _FakeSession(responses=[
-        _FakeResponse(text="<html></html>"),
-        _FakeResponse(text="<html></html>"),
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(text="<html></html>"),
+            _FakeResponse(text="<html></html>"),
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     parsed = ParsedFilename(title="Unknown Movie", year=2020, raw="unknown.mkv")
     result = scraper.search_and_download(parsed, language="en", output_dir=tmp_path)
@@ -530,12 +604,16 @@ def test_search_and_download_no_results_returns_none(tmp_path: Path) -> None:
 
 def test_search_and_download_fallback_query_when_no_results(tmp_path: Path) -> None:
     # First search empty, fallback search returns a result, download returns srt
-    session = _FakeSession(responses=[
-        _FakeResponse(text="<html></html>"),  # initial search
-        _FakeResponse(text=_SEARCH_HTML),  # fallback search
-        _FakeResponse(content=b"1\n00:00:01,000 --> 00:00:02,000\nhi\n",
-                      headers={"Content-Type": "text/plain"}),  # download
-    ])
+    session = _FakeSession(
+        responses=[
+            _FakeResponse(text="<html></html>"),  # initial search
+            _FakeResponse(text=_SEARCH_HTML),  # fallback search
+            _FakeResponse(
+                content=b"1\n00:00:01,000 --> 00:00:02,000\nhi\n",
+                headers={"Content-Type": "text/plain"},
+            ),  # download
+        ]
+    )
     scraper = _scraper_with_session(OpenSubtitlesScraper(), session)
     parsed = ParsedFilename(title="Movie", year=2020, raw="movie.mkv")
     result = scraper.search_and_download(parsed, language="en", output_dir=tmp_path)
@@ -543,6 +621,7 @@ def test_search_and_download_fallback_query_when_no_results(tmp_path: Path) -> N
 
 
 # ---------------- _ensure_session ----------------
+
 
 def test_ensure_session_creates_session(monkeypatch: pytest.MonkeyPatch) -> None:
     scraper = OpenSubtitlesScraper()

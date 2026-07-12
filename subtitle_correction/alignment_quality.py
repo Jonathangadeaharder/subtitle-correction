@@ -52,9 +52,7 @@ def is_aligned_mishearing(
         return False
 
     gr = word_overlap(ground_truth, reference)
-    if gr < gt_ref_min and normalize_for_compare(ground_truth) != normalize_for_compare(
-        reference
-    ):
+    if gr < gt_ref_min and normalize_for_compare(ground_truth) != normalize_for_compare(reference):
         return False
 
     wg = word_overlap(whisper, ground_truth)

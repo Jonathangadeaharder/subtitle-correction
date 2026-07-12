@@ -111,8 +111,17 @@ class FileMetadata:
 
 def extract_audio(mp4_path: Path, output_wav: Path) -> Path:
     cmd = [
-        "ffmpeg", "-y", "-i", str(mp4_path),
-        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(mp4_path),
+        "-vn",
+        "-acodec",
+        "pcm_s16le",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
         str(output_wav),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -133,14 +142,16 @@ def run_whisper(
 
     kwargs: dict = {}
     if anti_hallucination:
-        kwargs.update({
-            "condition_on_previous_text": False,
-            "hallucination_silence_threshold": 2.0,
-            "word_timestamps": True,
-            "no_speech_threshold": 0.6,
-            "compression_ratio_threshold": 2.4,
-            "logprob_threshold": -1.0,
-        })
+        kwargs.update(
+            {
+                "condition_on_previous_text": False,
+                "hallucination_silence_threshold": 2.0,
+                "word_timestamps": True,
+                "no_speech_threshold": 0.6,
+                "compression_ratio_threshold": 2.4,
+                "logprob_threshold": -1.0,
+            }
+        )
     if language:
         kwargs["language"] = language
 
@@ -184,15 +195,20 @@ def run_correction(
     reference_srt: Path,
     output_srt: Path,
     model_path: str = "runs/subtitle-corrector-4b-fused",
-    fused: bool = True
+    fused: bool = True,
 ) -> Path:
     resolved = str(Path(model_path).resolve())
     cmd = [
-        "subtitle-correction", "correct",
-        "--input-file", str(input_srt),
-        "--reference-file", str(reference_srt),
-        "--output", str(output_srt),
-        "--model", resolved,
+        "subtitle-correction",
+        "correct",
+        "--input-file",
+        str(input_srt),
+        "--reference-file",
+        str(reference_srt),
+        "--output",
+        str(output_srt),
+        "--model",
+        resolved,
     ]
     if fused:
         cmd.append("--fused")
@@ -224,10 +240,12 @@ def run_hallucination_filter(
     )
 
     dropped = stats.total - stats.kept
-    console.print(f"  [dim]Hallucination filter: {dropped}/{stats.total} dropped "
-                  f"(VAD={stats.dropped_vad}, confidence={stats.dropped_confidence}, "
-                  f"repetition={stats.dropped_repetition}, "
-                  f"phrase={stats.dropped_hallucination_phrase})[/dim]")
+    console.print(
+        f"  [dim]Hallucination filter: {dropped}/{stats.total} dropped "
+        f"(VAD={stats.dropped_vad}, confidence={stats.dropped_confidence}, "
+        f"repetition={stats.dropped_repetition}, "
+        f"phrase={stats.dropped_hallucination_phrase})[/dim]"
+    )
 
     for reason in stats.reasons[:10]:
         console.print(f"    [dim]{reason}[/dim]")
@@ -235,7 +253,9 @@ def run_hallucination_filter(
     return output_srt
 
 
-def run_opensubtitles_download(mp4_name: str, language: str, output_dir: Path, scraper=None) -> Path | None:
+def run_opensubtitles_download(
+    mp4_name: str, language: str, output_dir: Path, scraper=None
+) -> Path | None:
     parsed = smart_parse(mp4_name)
     query = parsed.search_query
     if parsed.episode_label:
@@ -252,7 +272,11 @@ def run_opensubtitles_download(mp4_name: str, language: str, output_dir: Path, s
             return None
 
         lang_lower = language.lower()
-        lang_filtered = [r for r in results if lang_lower in r.language.lower()] if any(r.language for r in results) else results
+        lang_filtered = (
+            [r for r in results if lang_lower in r.language.lower()]
+            if any(r.language for r in results)
+            else results
+        )
         if not lang_filtered:
             lang_filtered = results
 
@@ -275,9 +299,12 @@ def run_opensubtitles_download(mp4_name: str, language: str, output_dir: Path, s
 
 def run_alignment(whisper_srt: Path, subtitle_srt: Path, output_srt: Path) -> Path:
     cmd = [
-        "subtitle-correction", "align",
-        str(whisper_srt), str(subtitle_srt),
-        "--output", str(output_srt),
+        "subtitle-correction",
+        "align",
+        str(whisper_srt),
+        str(subtitle_srt),
+        "--output",
+        str(output_srt),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
@@ -286,8 +313,8 @@ def run_alignment(whisper_srt: Path, subtitle_srt: Path, output_srt: Path) -> Pa
 
 
 def safe_dirname(filename: str) -> str:
-    name = re.sub(r'[^\w.-]', '_', Path(filename).stem)
-    name = re.sub(r'_+', '_', name).strip('_')
+    name = re.sub(r"[^\w.-]", "_", Path(filename).stem)
+    name = re.sub(r"_+", "_", name).strip("_")
     return name[:100]
 
 
@@ -345,15 +372,21 @@ def process_file(
             sub_srt = work_dir / f"opensubtitles.{whisper_lang}.srt"
             console.print(f"  [dim]Language: {whisper_lang}[/dim]")
             if filter_hallucinations:
-                console.print("  [dim]Filtering hallucinations (VAD + confidence + heuristics)...[/dim]")
-                run_hallucination_filter(whisper_srt, wav_path, filtered_srt, json_path=whisper_json, lang=whisper_lang)
+                console.print(
+                    "  [dim]Filtering hallucinations (VAD + confidence + heuristics)...[/dim]"
+                )
+                run_hallucination_filter(
+                    whisper_srt, wav_path, filtered_srt, json_path=whisper_json, lang=whisper_lang
+                )
                 shutil.copy(str(filtered_srt), str(whisper_srt))
             meta.status = PipelineStep.WHISPER_DONE
 
         if meta.needs_step(PipelineStep.SUBTITLE_DOWNLOADED):
             console.print("  [dim]Downloading from OpenSubtitles...[/dim]")
             lang_for_subs = meta.whisper_lang or language or "en"
-            downloaded = run_opensubtitles_download(mp4_path.name, lang_for_subs, work_dir, scraper=scraper)
+            downloaded = run_opensubtitles_download(
+                mp4_path.name, lang_for_subs, work_dir, scraper=scraper
+            )
             if downloaded:
                 if downloaded != sub_srt:
                     shutil.move(str(downloaded), str(sub_srt))
@@ -369,8 +402,16 @@ def process_file(
             if whisper_srt.exists() and sub_srt.exists():
                 run_alignment(whisper_srt, sub_srt, aligned_srt)
                 if correct_whisper:
-                    console.print("  [dim]Correcting Whisper output with MLX model and reference...[/dim]")
-                    run_correction(whisper_srt, aligned_srt, corrected_srt, model_path=corrector_model, fused=True)
+                    console.print(
+                        "  [dim]Correcting Whisper output with MLX model and reference...[/dim]"
+                    )
+                    run_correction(
+                        whisper_srt,
+                        aligned_srt,
+                        corrected_srt,
+                        model_path=corrector_model,
+                        fused=True,
+                    )
                     shutil.copy(str(corrected_srt), str(whisper_srt))
                     console.print("  [dim]Whisper output corrected[/dim]")
                 meta.status = PipelineStep.ALIGNED
@@ -391,14 +432,17 @@ def process_file(
 
                 if w_lang == s_lang:
                     pairs = generate_training_pairs(
-                        whisper_srt, aligned_srt,
+                        whisper_srt,
+                        aligned_srt,
                         source_file=mp4_path.name,
                         alignment_score=score,
                     )
                     count = append_pairs_to_jsonl(pairs, pairs_file)
                     console.print(f"  [green]{count} training pairs generated[/green]")
                 else:
-                    console.print(f"  [yellow]Language mismatch ({w_lang} vs {s_lang}), skipping pairs[/yellow]")
+                    console.print(
+                        f"  [yellow]Language mismatch ({w_lang} vs {s_lang}), skipping pairs[/yellow]"
+                    )
 
                 meta.status = PipelineStep.PAIRED
 

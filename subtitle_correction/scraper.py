@@ -29,12 +29,36 @@ CHROME_USER_AGENT = (
 )
 
 LANG_CODE_MAP = {
-    "en": "eng", "de": "ger", "es": "spa", "fr": "fre", "it": "ita",
-    "pt": "por", "nl": "dut", "sv": "swe", "da": "dan", "fi": "fin",
-    "nb": "nor", "pl": "pol", "cs": "cze", "sk": "slo", "hu": "hun",
-    "ro": "rum", "bg": "bul", "el": "gre", "tr": "tur", "ru": "rus",
-    "ja": "jpn", "ko": "kor", "zh": "chi", "ar": "ara", "he": "heb",
-    "hi": "hin", "th": "tha", "vi": "vie", "id": "ind", "ms": "may",
+    "en": "eng",
+    "de": "ger",
+    "es": "spa",
+    "fr": "fre",
+    "it": "ita",
+    "pt": "por",
+    "nl": "dut",
+    "sv": "swe",
+    "da": "dan",
+    "fi": "fin",
+    "nb": "nor",
+    "pl": "pol",
+    "cs": "cze",
+    "sk": "slo",
+    "hu": "hun",
+    "ro": "rum",
+    "bg": "bul",
+    "el": "gre",
+    "tr": "tur",
+    "ru": "rus",
+    "ja": "jpn",
+    "ko": "kor",
+    "zh": "chi",
+    "ar": "ara",
+    "he": "heb",
+    "hi": "hin",
+    "th": "tha",
+    "vi": "vie",
+    "id": "ind",
+    "ms": "may",
 }
 
 
@@ -178,7 +202,9 @@ class OpenSubtitlesScraper:
 
         if resp.status_code == 401 or "Making sure you" in resp.text:
             for retry_wait in [30, 60, 120]:
-                console.print(f"[yellow]Anubis rate-limited, waiting {retry_wait}s (retry)...[/yellow]")
+                console.print(
+                    f"[yellow]Anubis rate-limited, waiting {retry_wait}s (retry)...[/yellow]"
+                )
                 time.sleep(retry_wait)
                 resp = session.get(search_url, allow_redirects=True)
                 if resp.status_code == 200 and "Making sure you" not in resp.text:
@@ -202,7 +228,9 @@ class OpenSubtitlesScraper:
             console.print(f"[dim]Filtered {len(results)} -> {len(filtered)} results[/dim]")
             return filtered
         if results:
-            console.print(f"[yellow]No '{language}' results, returning {len(results)} unfiltered[/yellow]")
+            console.print(
+                f"[yellow]No '{language}' results, returning {len(results)} unfiltered[/yellow]"
+            )
         return results
 
     def _parse_search_results(self, html: str) -> list[SubtitleResult]:
@@ -245,13 +273,15 @@ class OpenSubtitlesScraper:
 
             download_url = f"{OPENSUBTITLES_BASE}/en/download/sub/{sub_id}"
 
-            results.append(SubtitleResult(
-                id=sub_path,
-                name=title,
-                language=lang,
-                download_url=download_url,
-                downloads=downloads,
-            ))
+            results.append(
+                SubtitleResult(
+                    id=sub_path,
+                    name=title,
+                    language=lang,
+                    download_url=download_url,
+                    downloads=downloads,
+                )
+            )
 
         return results
 
@@ -310,12 +340,14 @@ class OpenSubtitlesScraper:
                     return output_dir / "failed.srt"
 
                 srt_data = z.read(srt_files[0])
-                safe_name = re.sub(r'[^\w.-]', '_', subtitle.name or srt_files[0])[:80]
+                safe_name = re.sub(r"[^\w.-]", "_", subtitle.name or srt_files[0])[:80]
                 if not safe_name.endswith(".srt"):
                     safe_name += ".srt"
                 output_path = output_dir / safe_name
                 output_path.write_bytes(srt_data)
-                console.print(f"[green]Downloaded: {output_path.name} ({len(srt_data)} bytes)[/green]")
+                console.print(
+                    f"[green]Downloaded: {output_path.name} ({len(srt_data)} bytes)[/green]"
+                )
                 return output_path
             except Exception as e:
                 console.print(f"[red]ZIP extraction failed: {e}[/red]")
@@ -323,21 +355,24 @@ class OpenSubtitlesScraper:
 
         if "gzip" in content_type or resp.content[:2] == b"\x1f\x8b":
             import gzip
+
             try:
                 srt_data = gzip.decompress(resp.content)
-                safe_name = re.sub(r'[^\w.-]', '_', subtitle.name)[:80]
+                safe_name = re.sub(r"[^\w.-]", "_", subtitle.name)[:80]
                 if not safe_name.endswith(".srt"):
                     safe_name += ".srt"
                 output_path = output_dir / safe_name
                 output_path.write_bytes(srt_data)
-                console.print(f"[green]Downloaded: {output_path.name} ({len(srt_data)} bytes)[/green]")
+                console.print(
+                    f"[green]Downloaded: {output_path.name} ({len(srt_data)} bytes)[/green]"
+                )
                 return output_path
             except Exception:
                 pass
 
         text = resp.content.decode("utf-8", errors="replace")
         if text.strip().startswith("1") or " --> " in text:
-            safe_name = re.sub(r'[^\w.-]', '_', subtitle.name)[:80]
+            safe_name = re.sub(r"[^\w.-]", "_", subtitle.name)[:80]
             if not safe_name.endswith(".srt"):
                 safe_name += ".srt"
             output_path = output_dir / safe_name

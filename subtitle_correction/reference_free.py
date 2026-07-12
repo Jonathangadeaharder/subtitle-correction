@@ -42,12 +42,8 @@ SYSTEM_PROMPT = (
 
 
 def build_prompt(prev_texts: list[str], cur_text: str, next_texts: list[str]) -> str:
-    prev_block = (
-        "\n".join(prev_texts) if prev_texts else "(kein vorheriger Untertitel)"
-    )
-    next_block = (
-        "\n".join(next_texts) if next_texts else "(kein naechster Untertitel)"
-    )
+    prev_block = "\n".join(prev_texts) if prev_texts else "(kein vorheriger Untertitel)"
+    next_block = "\n".join(next_texts) if next_texts else "(kein naechster Untertitel)"
     return (
         f"[VORHER]\n{prev_block}\n\n[AKTUELL]\n{cur_text}\n\n[NACHHER]\n{next_block}"
         "\n\nKorrigierter Text des aktuellen Untertitels:"
@@ -93,9 +89,7 @@ def _strip_model_noise(text: str, original: str) -> str:
     return text.strip()
 
 
-def write_preserving_timing(
-    input_path: Path, output_path: Path, new_texts: list[str]
-) -> None:
+def write_preserving_timing(input_path: Path, output_path: Path, new_texts: list[str]) -> None:
     raw = input_path.read_text(encoding="utf-8")
     blocks = re.split(r"\r?\n\r?\n", raw.lstrip("\ufeff").strip())
     if len(blocks) != len(new_texts):
@@ -183,9 +177,7 @@ def unified_diff(original_srt: Path | str, corrected_srt: Path | str) -> str:
     a = Path(str(original_srt)).read_text(encoding="utf-8").splitlines(keepends=True)
     b = Path(str(corrected_srt)).read_text(encoding="utf-8").splitlines(keepends=True)
     return "".join(
-        difflib.unified_diff(
-            a, b, fromfile=str(original_srt), tofile=str(corrected_srt)
-        )
+        difflib.unified_diff(a, b, fromfile=str(original_srt), tofile=str(corrected_srt))
     )
 
 
@@ -210,9 +202,7 @@ def main() -> None:
         return
     if not args.input or not args.output:
         parser.error("--input and --output are required unless --self-check")
-    changed, total = correct_srt(
-        args.input, args.output, model_name=args.model, temp=args.temp
-    )
+    changed, total = correct_srt(args.input, args.output, model_name=args.model, temp=args.temp)
     print(f"Wrote {args.output} ({changed}/{total} cues changed)")
 
 

@@ -27,9 +27,7 @@ _NORM_RE = re.compile(r"[^0-9a-zäöüáéíóúàèïü]")
 
 
 def _default_gretel_root() -> Path:
-    return Path(
-        os.getenv("GRETEL_ROOT", Path(__file__).resolve().parents[2] / "Gretel")
-    )
+    return Path(os.getenv("GRETEL_ROOT", Path(__file__).resolve().parents[2] / "Gretel"))
 
 
 def _tokens(text: str) -> list[str]:
@@ -44,9 +42,7 @@ def _norm(token: str) -> str:
 
 def strip_markdown_prose(text: str) -> str:
     """Drop markdown heading lines; keep the narration body."""
-    body = "\n".join(
-        line for line in text.splitlines() if not line.lstrip().startswith("#")
-    )
+    body = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
     return body.strip()
 
 
@@ -190,9 +186,7 @@ def unified_diff(original_srt: Path | str, corrected_srt: Path | str) -> str:
     a = Path(str(original_srt)).read_text(encoding="utf-8").splitlines(keepends=True)
     b = Path(str(corrected_srt)).read_text(encoding="utf-8").splitlines(keepends=True)
     return "".join(
-        difflib.unified_diff(
-            a, b, fromfile=str(original_srt), tofile=str(corrected_srt)
-        )
+        difflib.unified_diff(a, b, fromfile=str(original_srt), tofile=str(corrected_srt))
     )
 
 
@@ -213,9 +207,7 @@ def _self_check() -> None:
         n_cues=2,
     )
     assert replacement == [0, 1], replacement
-    print(
-        "self-check OK: gap carry-forward assigns every reference token monotonically."
-    )
+    print("self-check OK: gap carry-forward assigns every reference token monotonically.")
 
 
 def _main() -> None:
@@ -237,8 +229,7 @@ def _main() -> None:
     p.add_argument(
         "--whisper-srt",
         type=Path,
-        default=_default_gretel_root()
-        / "shot_production/chapter1/outputs/ch1_transcript.srt",
+        default=_default_gretel_root() / "shot_production/chapter1/outputs/ch1_transcript.srt",
     )
     p.add_argument(
         "--out",

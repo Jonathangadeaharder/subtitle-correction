@@ -11,8 +11,12 @@ def train_impl():
         sys.exit(1)
 
     cmd = [
-        sys.executable, "-m", "mlx_lm", "lora",
-        "-c", str(CONFIG_PATH),
+        sys.executable,
+        "-m",
+        "mlx_lm",
+        "lora",
+        "-c",
+        str(CONFIG_PATH),
         "--train",
     ]
     print(f"Running: {' '.join(cmd)}")

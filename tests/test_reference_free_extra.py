@@ -22,7 +22,9 @@ def _install_fake_mlx(monkeypatch: pytest.MonkeyPatch, generate_output: str = "c
     fake_sample_utils = types.ModuleType("mlx_lm.sample_utils")
 
     class _FakeTok:
-        def apply_chat_template(self, messages, *, tokenize, add_generation_prompt, enable_thinking):
+        def apply_chat_template(
+            self, messages, *, tokenize, add_generation_prompt, enable_thinking
+        ):
             return "PROMPT:" + str(messages)
 
     def _fake_make_sampler(temp: float = 0.0):
@@ -83,8 +85,7 @@ def test_correct_srt_changes_count(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     srt = tmp_path / "in.srt"
     out = tmp_path / "out.srt"
     srt.write_text(
-        "1\n00:00:01,000 --> 00:00:02,000\nhelo\n\n"
-        "2\n00:00:02,000 --> 00:00:03,000\nwelo\n",
+        "1\n00:00:01,000 --> 00:00:02,000\nhelo\n\n2\n00:00:02,000 --> 00:00:03,000\nwelo\n",
         encoding="utf-8",
     )
     changed, total = correct_srt(srt, out)
@@ -131,7 +132,9 @@ def test_self_check(capsys: pytest.CaptureFixture[str]) -> None:
     assert "self-check OK" in captured.out
 
 
-def test_main_self_check(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_main_self_check(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     monkeypatch.setattr(sys, "argv", ["reference_free", "--self-check"])
     main()
     captured = capsys.readouterr()

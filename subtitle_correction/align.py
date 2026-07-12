@@ -10,7 +10,17 @@ from rich.console import Console
 
 console = Console()
 
-WATERMARK_PATTERNS = ["untertitelung", "zdf", "ard", "rtl", "sat.1", "pro7", "vox", "subtitle", "captions provided"]
+WATERMARK_PATTERNS = [
+    "untertitelung",
+    "zdf",
+    "ard",
+    "rtl",
+    "sat.1",
+    "pro7",
+    "vox",
+    "subtitle",
+    "captions provided",
+]
 
 
 def _is_watermark(text: str) -> bool:
@@ -36,12 +46,41 @@ def detect_srt_language(srt_path: Path) -> str:
 
 def extract_language_from_filename(path: Path) -> str | None:
     name = path.stem
-    match = re.search(r'[._-]([a-z]{2,3})(?:[._-]|$)', name, re.IGNORECASE)
+    match = re.search(r"[._-]([a-z]{2,3})(?:[._-]|$)", name, re.IGNORECASE)
     if match:
         code = match.group(1).lower()
-        common = {"en", "de", "es", "fr", "it", "pt", "nl", "sv", "da", "fi",
-                   "nb", "pl", "cs", "sk", "hu", "ro", "bg", "el", "tr", "ru",
-                   "ja", "ko", "zh", "ar", "he", "hi", "th", "vi", "id", "ms"}
+        common = {
+            "en",
+            "de",
+            "es",
+            "fr",
+            "it",
+            "pt",
+            "nl",
+            "sv",
+            "da",
+            "fi",
+            "nb",
+            "pl",
+            "cs",
+            "sk",
+            "hu",
+            "ro",
+            "bg",
+            "el",
+            "tr",
+            "ru",
+            "ja",
+            "ko",
+            "zh",
+            "ar",
+            "he",
+            "hi",
+            "th",
+            "vi",
+            "id",
+            "ms",
+        }
         if code in common:
             return code
     return None
@@ -62,7 +101,8 @@ def align_with_alass(
         str(reference_srt),
         str(incorrect_srt),
         str(output_srt),
-        "--split-penalty", str(split_penalty),
+        "--split-penalty",
+        str(split_penalty),
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
@@ -82,8 +122,10 @@ def align_with_ffsubsync(
     cmd = [
         "ffsubsync",
         str(video_path),
-        "-i", str(input_srt),
-        "-o", str(output_srt),
+        "-i",
+        str(input_srt),
+        "-o",
+        str(output_srt),
         "--skip-sync-on-low-quality",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -96,7 +138,9 @@ def align_with_ffsubsync(
     return output_srt
 
 
-def compute_alignment_score(whisper_srt: Path, aligned_srt: Path, tolerance_ms: int = 2000) -> float:
+def compute_alignment_score(
+    whisper_srt: Path, aligned_srt: Path, tolerance_ms: int = 2000
+) -> float:
     whisper_subs = pysrt.open(str(whisper_srt))
     aligned_subs = pysrt.open(str(aligned_srt))
 
@@ -109,6 +153,7 @@ def compute_alignment_score(whisper_srt: Path, aligned_srt: Path, tolerance_ms: 
         return 0.0
 
     import bisect
+
     matched = 0
     for a in aligned_subs:
         a_start = a.start.ordinal
@@ -136,10 +181,13 @@ def generate_training_pairs(
     aligned_subs = pysrt.open(str(aligned_srt))
 
     if alignment_score < min_score:
-        console.print(f"[yellow]Skipping pairs (alignment score {alignment_score:.2f} < {min_score})[/yellow]")
+        console.print(
+            f"[yellow]Skipping pairs (alignment score {alignment_score:.2f} < {min_score})[/yellow]"
+        )
         return []
 
     import bisect
+
     whisper_entries = [(w.start.ordinal, w) for w in whisper_subs]
     whisper_starts = sorted(w.start.ordinal for w in whisper_subs)
 
@@ -174,16 +222,74 @@ def generate_training_pairs(
         if len(whisper_text) < 3 or len(aligned_text) < 3:
             continue
 
-        stop_words = {"the", "a", "an", "to", "of", "and", "or", "but", "in", "on", "at", "for", "with", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "can", "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them", "my", "your", "his", "its", "our", "their"}
+        stop_words = {
+            "the",
+            "a",
+            "an",
+            "to",
+            "of",
+            "and",
+            "or",
+            "but",
+            "in",
+            "on",
+            "at",
+            "for",
+            "with",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "can",
+            "i",
+            "you",
+            "he",
+            "she",
+            "it",
+            "we",
+            "they",
+            "me",
+            "him",
+            "her",
+            "us",
+            "them",
+            "my",
+            "your",
+            "his",
+            "its",
+            "our",
+            "their",
+        }
 
         def _content_words(text: str) -> set[str]:
-            return {w.strip(".,!?;:\"'") for w in text.lower().split() if w.strip(".,!?;:\"'") and w.strip(".,!?;:\"'") not in stop_words}
+            return {
+                w.strip(".,!?;:\"'")
+                for w in text.lower().split()
+                if w.strip(".,!?;:\"'") and w.strip(".,!?;:\"'") not in stop_words
+            }
 
         w_words = _content_words(whisper_text)
         a_words = _content_words(aligned_text)
 
         shared = w_words & a_words
-        overlap_ratio = len(shared) / max(len(w_words), len(a_words)) if w_words and a_words else 0.0
+        overlap_ratio = (
+            len(shared) / max(len(w_words), len(a_words)) if w_words and a_words else 0.0
+        )
 
         if overlap_ratio < overlap_threshold:
             skipped_unrelated += 1
@@ -192,34 +298,44 @@ def generate_training_pairs(
         if overlap_ratio < 0.2:
             w_only = w_words - a_words
             a_only = a_words - w_words
-            if w_only and a_only and not _is_phonetic_mishearing(w_only, a_only, whisper_text, aligned_text):
+            if (
+                w_only
+                and a_only
+                and not _is_phonetic_mishearing(w_only, a_only, whisper_text, aligned_text)
+            ):
                 skipped_rephrasing += 1
                 continue
 
-        pairs.append({
-            "whisper_text": whisper_text,
-            "corrected_text": aligned_text,
-            "source_file": source_file,
-            "alignment_score": round(alignment_score, 3),
-            "whisper_lang": "",
-            "subtitle_lang": "",
-            "timestamp_start": str(a.start),
-            "timestamp_end": str(a.end),
-        })
+        pairs.append(
+            {
+                "whisper_text": whisper_text,
+                "corrected_text": aligned_text,
+                "source_file": source_file,
+                "alignment_score": round(alignment_score, 3),
+                "whisper_lang": "",
+                "subtitle_lang": "",
+                "timestamp_start": str(a.start),
+                "timestamp_end": str(a.end),
+            }
+        )
 
-    console.print(f"[dim]Pairs: {len(pairs)} kept, {skipped_unrelated} skipped (unrelated), {skipped_rephrasing} skipped (rephrasing, not mishearing)[/dim]")
+    console.print(
+        f"[dim]Pairs: {len(pairs)} kept, {skipped_unrelated} skipped (unrelated), {skipped_rephrasing} skipped (rephrasing, not mishearing)[/dim]"
+    )
 
     return pairs
 
 
-def _is_phonetic_mishearing(whisper_only: set, subtitle_only: set, full_whisper: str, full_subtitle: str) -> bool:
+def _is_phonetic_mishearing(
+    whisper_only: set, subtitle_only: set, full_whisper: str, full_subtitle: str
+) -> bool:
     if not whisper_only or not subtitle_only:
         return False
 
     import re
 
     def _clean(w: str) -> str:
-        return re.sub(r'[^a-zà-ÿ]', '', w.lower())
+        return re.sub(r"[^a-zà-ÿ]", "", w.lower())
 
     def _levenshtein(a: str, b: str) -> int:
         if len(a) < len(b):
@@ -230,7 +346,7 @@ def _is_phonetic_mishearing(whisper_only: set, subtitle_only: set, full_whisper:
         for i, ca in enumerate(a):
             curr = [i + 1]
             for j, cb in enumerate(b):
-                curr.append(min(prev[j+1]+1, curr[j]+1, prev[j]+(ca != cb)))
+                curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (ca != cb)))
             prev = curr
         return prev[-1]
 

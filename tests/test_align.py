@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-import pysrt
 
 from subtitle_correction.align import (
     _is_phonetic_mishearing,
@@ -54,10 +53,13 @@ def test_extract_language_from_filename_unknown_code_returns_none() -> None:
 
 def test_detect_srt_language(tmp_path: Path) -> None:
     srt = tmp_path / "in.srt"
-    _write_srt(srt, [
-        (1, "00:00:01,000 --> 00:00:02,000", "Hello world this is english text"),
-        (2, "00:00:02,000 --> 00:00:03,000", "you are the one who has been here"),
-    ])
+    _write_srt(
+        srt,
+        [
+            (1, "00:00:01,000 --> 00:00:02,000", "Hello world this is english text"),
+            (2, "00:00:02,000 --> 00:00:03,000", "you are the one who has been here"),
+        ],
+    )
     lang = detect_srt_language(srt)
     assert isinstance(lang, str)
 
@@ -71,14 +73,20 @@ def test_detect_srt_language_too_short_returns_und(tmp_path: Path) -> None:
 def test_compute_alignment_score_perfect_match(tmp_path: Path) -> None:
     whisper = tmp_path / "w.srt"
     aligned = tmp_path / "a.srt"
-    _write_srt(whisper, [
-        (1, "00:00:01,000 --> 00:00:02,000", "a"),
-        (2, "00:00:02,000 --> 00:00:03,000", "b"),
-    ])
-    _write_srt(aligned, [
-        (1, "00:00:01,000 --> 00:00:02,000", "a"),
-        (2, "00:00:02,000 --> 00:00:03,000", "b"),
-    ])
+    _write_srt(
+        whisper,
+        [
+            (1, "00:00:01,000 --> 00:00:02,000", "a"),
+            (2, "00:00:02,000 --> 00:00:03,000", "b"),
+        ],
+    )
+    _write_srt(
+        aligned,
+        [
+            (1, "00:00:01,000 --> 00:00:02,000", "a"),
+            (2, "00:00:02,000 --> 00:00:03,000", "b"),
+        ],
+    )
     assert compute_alignment_score(whisper, aligned) == 1.0
 
 
@@ -111,12 +119,18 @@ def test_generate_training_pairs_skips_low_alignment_score(tmp_path: Path) -> No
 def test_generate_training_pairs_keeps_mishearing(tmp_path: Path) -> None:
     whisper = tmp_path / "w.srt"
     aligned = tmp_path / "a.srt"
-    _write_srt(whisper, [
-        (1, "00:00:01,000 --> 00:00:02,000", "the cat sat on the mat"),
-    ])
-    _write_srt(aligned, [
-        (1, "00:00:01,000 --> 00:00:02,000", "the bat sat on the mat"),
-    ])
+    _write_srt(
+        whisper,
+        [
+            (1, "00:00:01,000 --> 00:00:02,000", "the cat sat on the mat"),
+        ],
+    )
+    _write_srt(
+        aligned,
+        [
+            (1, "00:00:01,000 --> 00:00:02,000", "the bat sat on the mat"),
+        ],
+    )
     pairs = generate_training_pairs(whisper, aligned, alignment_score=0.9)
     assert len(pairs) == 1
     assert pairs[0]["whisper_text"] == "the cat sat on the mat"

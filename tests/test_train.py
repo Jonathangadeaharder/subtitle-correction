@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
@@ -29,10 +28,13 @@ def test_train_impl_runs_subprocess(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 
         class _R:
             returncode = 0
+
         return _R()
 
     monkeypatch.setattr("subtitle_correction.train.subprocess.run", _fake_run, raising=True)
-    monkeypatch.setattr("subtitle_correction.train.sys.executable", "/usr/bin/python3", raising=False)
+    monkeypatch.setattr(
+        "subtitle_correction.train.sys.executable", "/usr/bin/python3", raising=False
+    )
 
     with pytest.raises(SystemExit) as exc_info:
         train_impl()

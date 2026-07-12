@@ -4,7 +4,6 @@ import json
 import sys
 import types
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
@@ -20,6 +19,7 @@ def _write_srt(path: Path, blocks: list[tuple[str, str, str]]) -> None:
 
 
 # ---------------- align command ----------------
+
 
 def test_cli_align_missing_whisper_exits(tmp_path: Path) -> None:
     result = CliRunner().invoke(
@@ -47,10 +47,12 @@ def test_cli_align_alass_failure_exits(tmp_path: Path, monkeypatch: pytest.Monke
     _write_srt(sub, [("1", "00:00:01,000 --> 00:00:02,000", "ho")])
 
     import subtitle_correction.align as align_mod
+
     monkeypatch.setattr(align_mod.shutil, "which", lambda _n: None, raising=False)
 
     result = CliRunner().invoke(
-        app, ["align", str(whisper), str(sub), "--output", str(out)],
+        app,
+        ["align", str(whisper), str(sub), "--output", str(out)],
     )
     assert result.exit_code == 1
 
@@ -73,7 +75,8 @@ def test_cli_align_success_with_pairs(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr(align_mod, "align_with_alass", _fake_align, raising=False)
     monkeypatch.setattr(cli_mod, "compute_alignment_score", lambda *a, **k: 0.9, raising=False)
     monkeypatch.setattr(
-        cli_mod, "generate_training_pairs",
+        cli_mod,
+        "generate_training_pairs",
         lambda *a, **k: [{"whisper_text": "the cat sat", "corrected_text": "the cat ran"}],
         raising=False,
     )
@@ -83,8 +86,7 @@ def test_cli_align_success_with_pairs(tmp_path: Path, monkeypatch: pytest.Monkey
 
     result = CliRunner().invoke(
         app,
-        ["align", str(whisper), str(sub), "--output", str(out),
-         "--pairs-output", str(pairs_out)],
+        ["align", str(whisper), str(sub), "--output", str(out), "--pairs-output", str(pairs_out)],
     )
     assert result.exit_code == 0, result.stdout
     assert pairs_out.exists()
@@ -100,20 +102,27 @@ def test_cli_align_language_mismatch_skips_pairs(
     _write_srt(sub, [("1", "00:00:01,000 --> 00:00:02,000", "the cat ran")])
 
     import subtitle_correction.align as align_mod
-    monkeypatch.setattr(align_mod, "align_with_alass",
-                        lambda ref, bad, output, split_penalty=10: output.write_text(
-                            sub.read_text(encoding="utf-8"), encoding="utf-8") or output,
-                        raising=False)
+
+    monkeypatch.setattr(
+        align_mod,
+        "align_with_alass",
+        lambda ref, bad, output, split_penalty=10: (
+            output.write_text(sub.read_text(encoding="utf-8"), encoding="utf-8") or output
+        ),
+        raising=False,
+    )
     monkeypatch.setattr(align_mod, "detect_srt_language", lambda p: "en", raising=False)
     monkeypatch.setattr(align_mod, "extract_language_from_filename", lambda p: "de", raising=False)
 
     result = CliRunner().invoke(
-        app, ["align", str(whisper), str(sub), "--output", str(out), "--skip-pairs"],
+        app,
+        ["align", str(whisper), str(sub), "--output", str(out), "--skip-pairs"],
     )
     assert result.exit_code == 0
 
 
 # ---------------- scrape command ----------------
+
 
 def test_cli_scrape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     srt = tmp_path / "downloaded.srt"
@@ -122,14 +131,19 @@ def test_cli_scrape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class _FakeScraper:
         def search_and_download(self, parsed, language, output_dir):
             return srt
+
         def close(self):
             pass
 
     import subtitle_correction.cli as cli_mod
-    monkeypatch.setattr(cli_mod, "OpenSubtitlesScraper", lambda *a, **k: _FakeScraper(), raising=False)
+
+    monkeypatch.setattr(
+        cli_mod, "OpenSubtitlesScraper", lambda *a, **k: _FakeScraper(), raising=False
+    )
 
     result = CliRunner().invoke(
-        app, ["scrape", "Movie.2020.mp4", "--lang", "en", "--output-dir", str(tmp_path)],
+        app,
+        ["scrape", "Movie.2020.mp4", "--lang", "en", "--output-dir", str(tmp_path)],
     )
     assert result.exit_code == 0, result.stdout
 
@@ -138,32 +152,40 @@ def test_cli_scrape_no_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     class _FakeScraper:
         def search_and_download(self, parsed, language, output_dir):
             return None
+
         def close(self):
             pass
 
     import subtitle_correction.cli as cli_mod
-    monkeypatch.setattr(cli_mod, "OpenSubtitlesScraper", lambda *a, **k: _FakeScraper(), raising=False)
+
+    monkeypatch.setattr(
+        cli_mod, "OpenSubtitlesScraper", lambda *a, **k: _FakeScraper(), raising=False
+    )
 
     result = CliRunner().invoke(
-        app, ["scrape", "Unknown.2020.mp4", "--output-dir", str(tmp_path)],
+        app,
+        ["scrape", "Unknown.2020.mp4", "--output-dir", str(tmp_path)],
     )
     assert result.exit_code == 0
 
 
 # ---------------- pipeline command ----------------
 
+
 def test_cli_pipeline_no_files(tmp_path: Path) -> None:
     input_dir = tmp_path / "empty"
     input_dir.mkdir()
     result = CliRunner().invoke(
-        app, ["pipeline", "--input-dir", str(input_dir)],
+        app,
+        ["pipeline", "--input-dir", str(input_dir)],
     )
     assert result.exit_code == 0
 
 
 def test_cli_pipeline_single_file_not_found(tmp_path: Path) -> None:
     result = CliRunner().invoke(
-        app, ["pipeline", "--input-dir", str(tmp_path), "--file", str(tmp_path / "missing.mp4")],
+        app,
+        ["pipeline", "--input-dir", str(tmp_path), "--file", str(tmp_path / "missing.mp4")],
     )
     assert result.exit_code == 1
 
@@ -173,8 +195,10 @@ def test_cli_pipeline_single_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     mp4.write_bytes(b"\x00")
 
     import subtitle_correction.cli as cli_mod
+
     monkeypatch.setattr(
-        cli_mod, "process_file",
+        cli_mod,
+        "process_file",
         lambda *a, **k: {"status": "paired", "dir": str(tmp_path)},
         raising=False,
     )
@@ -183,10 +207,13 @@ def test_cli_pipeline_single_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         def close(self):
             pass
 
-    monkeypatch.setattr(cli_mod, "OpenSubtitlesScraper", lambda *a, **k: _FakeScraper(), raising=False)
+    monkeypatch.setattr(
+        cli_mod, "OpenSubtitlesScraper", lambda *a, **k: _FakeScraper(), raising=False
+    )
 
     result = CliRunner().invoke(
-        app, ["pipeline", "--input-dir", str(tmp_path), "--file", str(mp4), "--all"],
+        app,
+        ["pipeline", "--input-dir", str(tmp_path), "--file", str(mp4), "--all"],
     )
     assert result.exit_code == 0, result.stdout
 
@@ -195,27 +222,36 @@ def test_cli_pipeline_failed_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     mp4 = tmp_path / "show.S01E01.english.mp4"
     mp4.write_bytes(b"\x00")
     import subtitle_correction.cli as cli_mod
+
     monkeypatch.setattr(
-        cli_mod, "process_file",
+        cli_mod,
+        "process_file",
         lambda *a, **k: {"status": "failed", "error": "boom", "dir": str(tmp_path)},
         raising=False,
     )
+
     class _FakeScraper:
         def close(self):
             pass
-    monkeypatch.setattr(cli_mod, "OpenSubtitlesScraper", lambda *a, **k: _FakeScraper(), raising=False)
+
+    monkeypatch.setattr(
+        cli_mod, "OpenSubtitlesScraper", lambda *a, **k: _FakeScraper(), raising=False
+    )
 
     result = CliRunner().invoke(
-        app, ["pipeline", "--input-dir", str(tmp_path)],
+        app,
+        ["pipeline", "--input-dir", str(tmp_path)],
     )
     assert result.exit_code == 0
 
 
 # ---------------- pipeline-status command ----------------
 
+
 def test_cli_pipeline_status_no_cache(tmp_path: Path) -> None:
     result = CliRunner().invoke(
-        app, ["pipeline-status", "--input-dir", str(tmp_path)],
+        app,
+        ["pipeline-status", "--input-dir", str(tmp_path)],
     )
     assert result.exit_code == 0
 
@@ -224,7 +260,8 @@ def test_cli_pipeline_status_empty_cache(tmp_path: Path) -> None:
     cache = tmp_path / ".subcache"
     cache.mkdir()
     result = CliRunner().invoke(
-        app, ["pipeline-status", "--input-dir", str(tmp_path)],
+        app,
+        ["pipeline-status", "--input-dir", str(tmp_path)],
     )
     assert result.exit_code == 0
 
@@ -233,22 +270,29 @@ def test_cli_pipeline_status_with_entries(tmp_path: Path) -> None:
     cache = tmp_path / ".subcache"
     work = cache / "movie"
     work.mkdir(parents=True)
-    (work / "metadata.json").write_text(json.dumps({
-        "source_file": "movie.mp4",
-        "status": "paired",
-        "whisper_lang": "en",
-        "subtitle_lang": "de",
-        "alignment_score": 0.8,
-        "error": "",
-    }), encoding="utf-8")
+    (work / "metadata.json").write_text(
+        json.dumps(
+            {
+                "source_file": "movie.mp4",
+                "status": "paired",
+                "whisper_lang": "en",
+                "subtitle_lang": "de",
+                "alignment_score": 0.8,
+                "error": "",
+            }
+        ),
+        encoding="utf-8",
+    )
     result = CliRunner().invoke(
-        app, ["pipeline-status", "--input-dir", str(tmp_path)],
+        app,
+        ["pipeline-status", "--input-dir", str(tmp_path)],
     )
     assert result.exit_code == 0
     assert "movie" in result.stdout
 
 
 # ---------------- prepare command ----------------
+
 
 def test_cli_prepare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     input_file = tmp_path / "pairs.jsonl"
@@ -260,20 +304,36 @@ def test_cli_prepare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
     # The command imports prepare_data_impl at call time; patch the source module.
     import subtitle_correction.prepare_data as pd_mod
+
     captured: dict = {}
 
     def _fake_prepare(input_file, output_dir, val_split, seed, augment, identity_ratio):
-        captured.update(input_file=input_file, output_dir=output_dir,
-                        val_split=val_split, seed=seed, augment=augment,
-                        identity_ratio=identity_ratio)
+        captured.update(
+            input_file=input_file,
+            output_dir=output_dir,
+            val_split=val_split,
+            seed=seed,
+            augment=augment,
+            identity_ratio=identity_ratio,
+        )
         (output_dir).mkdir(parents=True, exist_ok=True)
         (output_dir / "train.jsonl").write_text("{}", encoding="utf-8")
 
     monkeypatch.setattr(pd_mod, "prepare_data_impl", _fake_prepare, raising=False)
 
     result = CliRunner().invoke(
-        app, ["prepare", "--input", str(input_file), "--output-dir", str(out_dir),
-              "--val-split", "0.2", "--augment", "5"],
+        app,
+        [
+            "prepare",
+            "--input",
+            str(input_file),
+            "--output-dir",
+            str(out_dir),
+            "--val-split",
+            "0.2",
+            "--augment",
+            "5",
+        ],
     )
     assert result.exit_code == 0, result.stdout
     assert captured["val_split"] == 0.2
@@ -282,10 +342,12 @@ def test_cli_prepare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 # ---------------- train command ----------------
 
+
 def test_cli_train(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # The command imports train_impl at call time via `from .train import train_impl`;
     # patch the source module to avoid invoking real mlx_lm subprocess.
     import subtitle_correction.train as train_mod
+
     called: list = []
 
     def _fake_train_impl():
@@ -298,6 +360,7 @@ def test_cli_train(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ---------------- correct command ----------------
+
 
 def _install_fake_mlx_cli(monkeypatch: pytest.MonkeyPatch, output: str = "corrected"):
     fake_mlx = types.ModuleType("mlx_lm")
@@ -333,7 +396,8 @@ def test_cli_correct_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     srt.write_text("1\n00:00:01,000 --> 00:00:02,000\nhello world\n", encoding="utf-8")
     out = tmp_path / "out.srt"
     result = CliRunner().invoke(
-        app, ["correct", "--input-file", str(srt), "--output", str(out), "--lang", "en"],
+        app,
+        ["correct", "--input-file", str(srt), "--output", str(out), "--lang", "en"],
     )
     assert result.exit_code == 0, result.stdout
     assert out.exists()
@@ -341,22 +405,26 @@ def test_cli_correct_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
 
 # ---------------- create-dataset command ----------------
 
+
 def test_cli_create_dataset_missing_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import subtitle_correction.evaluate as eval_mod
 
     def _fake_create(subcache_dir, output_dir, max_slices):
         import typer
+
         raise typer.Exit(code=1)
 
     monkeypatch.setattr(eval_mod, "create_dataset_impl", _fake_create, raising=False)
     result = CliRunner().invoke(
-        app, ["create-dataset", "--subcache-dir", str(tmp_path / "missing")],
+        app,
+        ["create-dataset", "--subcache-dir", str(tmp_path / "missing")],
     )
     assert result.exit_code == 1
 
 
 def test_cli_create_dataset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import subtitle_correction.evaluate as eval_mod
+
     captured: dict = {}
 
     def _fake_create(subcache_dir, output_dir, max_slices):
@@ -366,7 +434,8 @@ def test_cli_create_dataset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(eval_mod, "create_dataset_impl", _fake_create, raising=False)
     result = CliRunner().invoke(
-        app, ["create-dataset", "--subcache-dir", str(tmp_path), "--max-slices", "50"],
+        app,
+        ["create-dataset", "--subcache-dir", str(tmp_path), "--max-slices", "50"],
     )
     assert result.exit_code == 0, result.stdout
     assert captured["max_slices"] == 50
@@ -374,8 +443,10 @@ def test_cli_create_dataset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
 # ---------------- evaluate command ----------------
 
+
 def test_cli_evaluate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import subtitle_correction.evaluate as eval_mod
+
     dataset = tmp_path / "dataset.jsonl"
     dataset.write_text("", encoding="utf-8")
     captured: dict = {}
@@ -386,13 +457,15 @@ def test_cli_evaluate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(eval_mod, "evaluate_model_impl", _fake_eval, raising=False)
     result = CliRunner().invoke(
-        app, ["evaluate", "--dataset-path", str(dataset), "--limit", "5"],
+        app,
+        ["evaluate", "--dataset-path", str(dataset), "--limit", "5"],
     )
     assert result.exit_code == 0, result.stdout
     assert captured["limit"] == 5
 
 
 # ---------------- srt-from-reference command (already tested) ----------------
+
 
 def test_cli_srt_from_reference(tmp_path: Path) -> None:
     whisper = tmp_path / "whisper.srt"
@@ -403,14 +476,22 @@ def test_cli_srt_from_reference(tmp_path: Path) -> None:
 
     result = CliRunner().invoke(
         app,
-        ["srt-from-reference", "--reference", str(reference),
-         "--whisper-srt", str(whisper), "--out", str(out)],
+        [
+            "srt-from-reference",
+            "--reference",
+            str(reference),
+            "--whisper-srt",
+            str(whisper),
+            "--out",
+            str(out),
+        ],
     )
     assert result.exit_code == 0, result.stdout
     assert out.exists()
 
 
 # ---------------- correct-reference-free command ----------------
+
 
 def test_cli_correct_reference_free(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _install_fake_mlx_cli(monkeypatch, output="korrigiert")
@@ -419,7 +500,8 @@ def test_cli_correct_reference_free(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     _write_srt(srt, [("1", "00:00:01,000 --> 00:00:02,000", "hallo welt")])
 
     result = CliRunner().invoke(
-        app, ["correct-reference-free", "--input", str(srt), "--output", str(out)],
+        app,
+        ["correct-reference-free", "--input", str(srt), "--output", str(out)],
     )
     assert result.exit_code == 0, result.stdout
     assert out.exists()

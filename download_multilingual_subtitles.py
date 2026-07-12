@@ -88,9 +88,7 @@ def _download_and_align(
             if out_srt.exists():
                 print(f"  [{lang}] Aligning with alass...")
                 try:
-                    align_with_alass(
-                        whisper_srt, out_srt, aligned_srt, split_penalty=10
-                    )
+                    align_with_alass(whisper_srt, out_srt, aligned_srt, split_penalty=10)
                     score = compute_alignment_score(whisper_srt, aligned_srt)
                     print(f"  [{lang}] Aligned successfully (score: {score:.2%})")
                 except Exception as e:

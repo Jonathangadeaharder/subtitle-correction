@@ -7,6 +7,7 @@ Rules:
 
 Run this script to merge ground_truth back into training_pairs.jsonl.
 """
+
 import json
 from pathlib import Path
 
@@ -209,7 +210,6 @@ GROUND_TRUTHS = {
     "I have a right to know everything.": "I have a right to know everything.",
     # [99] Whisper valid (rule 3)
     "I'm standing before you and I see you.": "I'm standing here looking at you.",
-
     # --- PAIRS 100-199 ---
     # [100] Whisper valid (rule 3) - dissertation subject
     "I'm doing my dissertation on epigenetics.": "I'm doing my dissertation on epigenetics.",

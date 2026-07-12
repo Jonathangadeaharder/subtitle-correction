@@ -140,7 +140,9 @@ def _install_fake_yaml(monkeypatch: pytest.MonkeyPatch, config: dict | None = No
     monkeypatch.setitem(sys.modules, "yaml", fake_yaml)
 
 
-def test_prepare_data_impl_empty_pairs_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_prepare_data_impl_empty_pairs_exits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     input_file = tmp_path / "pairs.jsonl"
     input_file.write_text("", encoding="utf-8")
     _install_fake_transformers(monkeypatch)
@@ -170,8 +172,10 @@ def test_prepare_data_impl_writes_train_and_val(
     val = out_dir / "valid.jsonl"
     assert train.exists()
     assert val.exists()
-    train_lines = [json.loads(l) for l in train.read_text(encoding="utf-8").splitlines() if l.strip()]
-    val_lines = [json.loads(l) for l in val.read_text(encoding="utf-8").splitlines() if l.strip()]
+    train_lines = [
+        json.loads(line) for line in train.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
+    val_lines = [json.loads(line) for line in val.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(train_lines) >= 1
     assert len(val_lines) >= 1
     assert all("text" in ex for ex in train_lines + val_lines)
@@ -188,18 +192,6 @@ def test_prepare_data_impl_reads_repo_config(
         encoding="utf-8",
     )
     out_dir = tmp_path / "out"
-    _install_fake_transformers(monkeypatch)
-    # Force config_path to a non-existent file to exercise the default-model branch
-    fake_yaml = types.ModuleType("yaml")
-    fake_yaml.safe_load = lambda s: {}
-    monkeypatch.setitem(sys.modules, "yaml", fake_yaml)
-    # Patch the config_path attribute on the module to a missing path
-    import subtitle_correction.prepare_data as pd_mod
-    fake_config = tmp_path / "missing_config.yaml"
-    # The function reads Path(__file__).parent.parent / "config.yaml" inline,
-    # so we point the repo root resolution at tmp_path by patching __file__ is
-    # fragile; instead just verify the happy path with the real config present.
-    monkeypatch.undo()
     _install_fake_transformers(monkeypatch)
     _install_fake_yaml(monkeypatch, {"model": "config-model"})
 

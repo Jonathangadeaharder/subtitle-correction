@@ -6,12 +6,7 @@ from .lang_detect import detect_lang
 
 
 def clean_field(text: str) -> str:
-    return (
-        text.replace("♪", "")
-        .replace("\n", " ")
-        .replace("\r", " ")
-        .strip()
-    )
+    return text.replace("♪", "").replace("\n", " ").replace("\r", " ").strip()
 
 
 def detect_task_mode(whisper: str, reference: str) -> str:
@@ -20,9 +15,7 @@ def detect_task_mode(whisper: str, reference: str) -> str:
     return "dub" if w_lang != r_lang else "same_lang"
 
 
-def format_user_body(
-    whisper: str, reference: str, *, task_mode: str | None = None
-) -> str:
+def format_user_body(whisper: str, reference: str, *, task_mode: str | None = None) -> str:
     mode = task_mode or detect_task_mode(whisper, reference)
     lines = [
         f"ASR transcription: {clean_field(whisper)}",

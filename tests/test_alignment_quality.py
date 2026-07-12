@@ -111,56 +111,84 @@ def test_classify_eval_entry_no_error_returns_identity() -> None:
 
 
 def test_classify_eval_entry_no_reference() -> None:
-    assert classify_eval_entry({
-        "has_error": True,
-        "whisper_text": "w",
-        "ground_truth": "gt",
-        "reference": None,
-    }) == "no_reference"
+    assert (
+        classify_eval_entry(
+            {
+                "has_error": True,
+                "whisper_text": "w",
+                "ground_truth": "gt",
+                "reference": None,
+            }
+        )
+        == "no_reference"
+    )
 
 
 def test_classify_eval_entry_empty_reference() -> None:
-    assert classify_eval_entry({
-        "has_error": True,
-        "whisper_text": "w",
-        "ground_truth": "gt",
-        "reference": "   ",
-    }) == "no_reference"
+    assert (
+        classify_eval_entry(
+            {
+                "has_error": True,
+                "whisper_text": "w",
+                "ground_truth": "gt",
+                "reference": "   ",
+            }
+        )
+        == "no_reference"
+    )
 
 
 def test_classify_eval_entry_lyrics() -> None:
-    assert classify_eval_entry({
-        "has_error": True,
-        "whisper_text": "♪ song",
-        "ground_truth": "♪ song",
-        "reference": "♪ song",
-    }) == "lyrics"
+    assert (
+        classify_eval_entry(
+            {
+                "has_error": True,
+                "whisper_text": "♪ song",
+                "ground_truth": "♪ song",
+                "reference": "♪ song",
+            }
+        )
+        == "lyrics"
+    )
 
 
 def test_classify_eval_entry_in_scope() -> None:
-    assert classify_eval_entry({
-        "has_error": True,
-        "whisper_text": "the cat sat",
-        "ground_truth": "the cat ran",
-        "reference": "the cat ran",
-    }) == "in_scope"
+    assert (
+        classify_eval_entry(
+            {
+                "has_error": True,
+                "whisper_text": "the cat sat",
+                "ground_truth": "the cat ran",
+                "reference": "the cat ran",
+            }
+        )
+        == "in_scope"
+    )
 
 
 def test_classify_eval_entry_misaligned() -> None:
     # Whisper shares nothing with ground truth/reference, gt != ref
-    assert classify_eval_entry({
-        "has_error": True,
-        "whisper_text": "alpha bravo charlie",
-        "ground_truth": "banana split sundae",
-        "reference": "computer keyboard mouse",
-    }) == "misaligned"
+    assert (
+        classify_eval_entry(
+            {
+                "has_error": True,
+                "whisper_text": "alpha bravo charlie",
+                "ground_truth": "banana split sundae",
+                "reference": "computer keyboard mouse",
+            }
+        )
+        == "misaligned"
+    )
 
 
 @pytest.mark.parametrize(
     ("entry", "expected"),
     [
         ({"has_error": False}, "identity"),
-        ({"has_error": True, "whisper_text": "w", "ground_truth": "g", "reference": None}, "no_reference"),
+        (
+            {"has_error": True, "whisper_text": "w", "ground_truth": "g", "reference": None},
+            "no_reference",
+        ),
         (
             {
                 "has_error": True,

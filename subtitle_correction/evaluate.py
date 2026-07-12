@@ -26,16 +26,16 @@ def Levenshtein_distance(s1: str, s2: str) -> int:
     for i, c1 in enumerate(s1):
         curr = [i + 1]
         for j, c2 in enumerate(s2):
-            curr.append(min(prev[j+1]+1, curr[j]+1, prev[j]+(c1 != c2)))
+            curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (c1 != c2)))
         prev = curr
     return prev[-1]
 
 
 def calculate_wer(reference: str, hypothesis: str) -> float:
     # Remove all punctuation and lowercase
-    r_clean = re.sub(r'[^\w\s]', '', reference.lower()).strip()
-    h_clean = re.sub(r'[^\w\s]', '', hypothesis.lower()).strip()
-    
+    r_clean = re.sub(r"[^\w\s]", "", reference.lower()).strip()
+    h_clean = re.sub(r"[^\w\s]", "", hypothesis.lower()).strip()
+
     r = r_clean.split()
     h = h_clean.split()
     if not r:
@@ -47,15 +47,14 @@ def calculate_wer(reference: str, hypothesis: str) -> float:
         d[0][j] = j
     for i in range(1, len(r) + 1):
         for j in range(1, len(h) + 1):
-            if r[i-1] == h[j-1]:
-                d[i][j] = d[i-1][j-1]
+            if r[i - 1] == h[j - 1]:
+                d[i][j] = d[i - 1][j - 1]
             else:
-                substitution = d[i-1][j-1] + 1
-                insertion = d[i][j-1] + 1
-                deletion = d[i-1][j] + 1
+                substitution = d[i - 1][j - 1] + 1
+                insertion = d[i][j - 1] + 1
+                deletion = d[i - 1][j] + 1
                 d[i][j] = min(substitution, insertion, deletion)
     return d[len(r)][len(h)] / len(r)
-
 
 
 def create_dataset_impl(
@@ -90,7 +89,12 @@ def create_dataset_impl(
         whisper_srt = d / "whisper.srt"
         opensubtitles_srt = next(d.glob("opensubtitles.*.srt"), None)
 
-        if not (audio_wav.exists() and aligned_srt.exists() and whisper_srt.exists() and opensubtitles_srt):
+        if not (
+            audio_wav.exists()
+            and aligned_srt.exists()
+            and whisper_srt.exists()
+            and opensubtitles_srt
+        ):
             continue
 
         score = compute_alignment_score(whisper_srt, aligned_srt)
@@ -98,15 +102,18 @@ def create_dataset_impl(
             continue
 
         # Get aligned pairs
-        pairs = generate_training_pairs(whisper_srt, aligned_srt, source_file=d.name, alignment_score=score)
-        
+        pairs = generate_training_pairs(
+            whisper_srt, aligned_srt, source_file=d.name, alignment_score=score
+        )
+
         # We also want to harvest some identical pairs to test model's stability
         # Let's extract identity pairs manually
         w_subs = pysrt.open(str(whisper_srt))
         a_subs = pysrt.open(str(aligned_srt))
-        
+
         # Match exactly identical text segments
         import bisect
+
         a_starts = [a.start.ordinal for a in a_subs]
         for w in w_subs:
             w_start = w.start.ordinal
@@ -118,16 +125,18 @@ def create_dataset_impl(
                         w_text = w.text.strip()
                         a_text = a.text.strip()
                         if w_text and a_text and w_text == a_text and len(w_text) > 10:
-                            pairs.append({
-                                "whisper_text": w_text,
-                                "corrected_text": a_text,
-                                "source_file": d.name,
-                                "alignment_score": score,
-                                "timestamp_start": str(a.start),
-                                "timestamp_end": str(a.end),
-                            })
+                            pairs.append(
+                                {
+                                    "whisper_text": w_text,
+                                    "corrected_text": a_text,
+                                    "source_file": d.name,
+                                    "alignment_score": score,
+                                    "timestamp_start": str(a.start),
+                                    "timestamp_end": str(a.end),
+                                }
+                            )
                             break
-        
+
         all_pairs.extend(pairs)
 
     if not all_pairs:
@@ -139,7 +148,9 @@ def create_dataset_impl(
     identity_pairs = [p for p in all_pairs if p["whisper_text"] == p["corrected_text"]]
 
     console.print(f"Found {len(error_pairs)} candidates with speech transcription errors")
-    console.print(f"Found {len(identity_pairs)} candidates with correct transcriptions (identities)")
+    console.print(
+        f"Found {len(identity_pairs)} candidates with correct transcriptions (identities)"
+    )
 
     half_max = max_slices // 2
     selected_errors = error_pairs[:half_max]
@@ -153,39 +164,46 @@ def create_dataset_impl(
     for i, pair in enumerate(selected_pairs, 1):
         source_dir = subcache_dir / pair["source_file"]
         audio_wav = source_dir / "audio.wav"
-        
+
         slice_id = f"slice_{i:04d}"
         slice_file = audio_slices_dir / f"{slice_id}.wav"
-        
+
         start_sec = srt_time_to_seconds(pair["timestamp_start"])
         end_sec = srt_time_to_seconds(pair["timestamp_end"])
         duration = end_sec - start_sec
-        
+
         if duration <= 0:
             continue
-            
+
         # ffmpeg audio cropping
         cmd = [
-            "ffmpeg", "-y",
-            "-ss", f"{start_sec:.3f}",
-            "-t", f"{duration:.3f}",
-            "-i", str(audio_wav),
-            "-c", "copy",
-            str(slice_file)
+            "ffmpeg",
+            "-y",
+            "-ss",
+            f"{start_sec:.3f}",
+            "-t",
+            f"{duration:.3f}",
+            "-i",
+            str(audio_wav),
+            "-c",
+            "copy",
+            str(slice_file),
         ]
-        
+
         result = subprocess.run(cmd, capture_output=True)
         if result.returncode == 0:
-            dataset_entries.append({
-                "id": slice_id,
-                "audio_path": f"audio_slices/{slice_file.name}",
-                "whisper_text": pair["whisper_text"],
-                "ground_truth": pair["corrected_text"],
-                "source_file": pair["source_file"],
-                "start_time": pair["timestamp_start"],
-                "end_time": pair["timestamp_end"],
-                "has_error": pair["whisper_text"] != pair["corrected_text"]
-            })
+            dataset_entries.append(
+                {
+                    "id": slice_id,
+                    "audio_path": f"audio_slices/{slice_file.name}",
+                    "whisper_text": pair["whisper_text"],
+                    "ground_truth": pair["corrected_text"],
+                    "source_file": pair["source_file"],
+                    "start_time": pair["timestamp_start"],
+                    "end_time": pair["timestamp_end"],
+                    "has_error": pair["whisper_text"] != pair["corrected_text"],
+                }
+            )
         if i % 20 == 0 or i == len(selected_pairs):
             console.print(f"  Sliced {i}/{len(selected_pairs)}")
 
@@ -195,7 +213,9 @@ def create_dataset_impl(
         for entry in dataset_entries:
             f.write(json.dumps(entry) + "\n")
 
-    console.print(f"[bold green]Dataset created successfully at {dataset_file} with {len(dataset_entries)} slices![/bold green]")
+    console.print(
+        f"[bold green]Dataset created successfully at {dataset_file} with {len(dataset_entries)} slices![/bold green]"
+    )
 
 
 def normalize_for_compare(text: str) -> str:

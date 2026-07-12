@@ -116,7 +116,9 @@ def test_evaluate_model_impl_empty_dataset(tmp_path: Path) -> None:
     assert evaluate_model_impl(dataset_path=dataset) is None
 
 
-def test_evaluate_model_impl_runs_with_mock_corrector(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_evaluate_model_impl_runs_with_mock_corrector(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dataset = tmp_path / "dataset.jsonl"
     entries = [
         {
@@ -181,7 +183,9 @@ def test_evaluate_model_impl_runs_with_mock_corrector(tmp_path: Path, monkeypatc
     assert result is None
 
 
-def test_evaluate_model_impl_worsened_branch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_evaluate_model_impl_worsened_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Force a "worsened" outcome: corrected text differs from both whisper and target,
     # and is farther from target than the original.
     dataset = tmp_path / "dataset.jsonl"
@@ -252,6 +256,6 @@ def test_create_dataset_impl_full_flow_with_mocked_subprocess(
     create_dataset_impl(subcache_dir=subcache, output_dir=out, max_slices=10)
     dataset = out / "dataset.jsonl"
     assert dataset.exists()
-    lines = [json.loads(l) for l in dataset.read_text(encoding="utf-8").splitlines() if l.strip()]
+    lines = [json.loads(line) for line in dataset.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(lines) >= 1
     assert lines[0]["id"].startswith("slice_")
