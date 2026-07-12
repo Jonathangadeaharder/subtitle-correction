@@ -1,0 +1,16 @@
+name: Disable SonarCloud AA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  disable-aa:
+    runs-on: [self-hosted, macOS, ARM64, VidiomTM]
+    steps:
+      - name: Disable Automatic Analysis
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          curl -sS -X POST "https://sonarcloud.io/api/alm_settings/disable_auto_analysis?project=Jonathangadeaharder_subtitle-correction" \
+            -H "Authorization: Bearer $SONAR_TOKEN" \
+            -w "\nHTTP_STATUS:%{http_code}\n"
