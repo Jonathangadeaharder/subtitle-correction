@@ -19,7 +19,7 @@ dependencies = [
 subtitle-correction = "subtitle_correction.cli:app"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.9"]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.9"]
 
 [build-system]
 requires = ["hatchling"]
@@ -27,6 +27,14 @@ build-backend = "hatchling.build"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--cov=subtitle_correction --cov-branch --cov-report=term-missing --cov-fail-under=90"
+
+[tool.coverage.run]
+source = ["subtitle_correction"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
 
 [tool.ruff]
 line-length = 100
