@@ -37,24 +37,25 @@ jobs:
           set +e
           COMMENTS_JSON=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments" \
             --paginate \
-            --jq '.[] | select(.user.login == "github-actions[bot]") | .id' 2>/dev/null)
+            --jq '.[] | select(.user.login == "github-actions[bot]") | "\(.id)\t\(.node_id)"' 2>/dev/null)
           if [ -z "$COMMENTS_JSON" ]; then
             echo "No previous comments to resolve."
             exit 0
           fi
-          for id in $COMMENTS_JSON; do
+          while IFS=$'\t' read -r id node_id; do
+            [ -z "$id" ] && continue
             gh api "repos/${REPO}/pulls/comments/${id}/replies" \
               --method POST \
               -f body="Resolved — superseded by a newer review run." \
               > /dev/null 2>&1 || true
             gh api graphql -f query="
               mutation {
-                minimizeComment(input: {subjectId: \"${id}\"}) {
+                minimizeComment(input: {subjectId: \"${node_id}\"}) {
                   minimizedComment { isMinimized minimizedReason }
                 }
               }" > /dev/null 2>&1 || true
-          done
-          echo "Resolved $(echo "$COMMENTS_JSON" | wc -l | tr -d ' ') previous comment(s)."
+          done <<< "$COMMENTS_JSON"
+          echo "Resolved previous comment(s)."
       - name: Fetch base branch
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -149,7 +150,11 @@ jobs:
         env:
           WORK_DIR: ${{ github.workspace }}
         run: |
-          BLOCKING=$(jq '[.comments[] | select((.severity // "medium") as $s | ["low","nit","info"] | index($s) | not)] | length' "$WORK_DIR/ocr-output.json" 2>/dev/null || echo "0")
+          BLOCKING=$(jq '[.comments[] | select((.severity // "medium") as $s | ["low","nit","info"] | index($s) | not)] | length' "$WORK_DIR/ocr-output.json" 2>/dev/null)
+          if [ -z "$BLOCKING" ] || [ "$BLOCKING" = "null" ]; then
+            echo "::error::Failed to parse OpenCodeReview output for severity gating."
+            exit 1
+          fi
           if [ "$BLOCKING" -gt 0 ]; then
             echo "::error::OpenCodeReview found $BLOCKING finding(s) above low severity. Fix and re-review."
             exit 1
