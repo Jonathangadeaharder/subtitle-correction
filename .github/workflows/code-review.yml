@@ -1,0 +1,163 @@
+name: AI Code Review
+on:
+  pull_request:
+    branches: [main, master]
+permissions:
+  contents: read
+  pull-requests: write
+  repository-projects: read
+concurrency:
+  group: ocr-review-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  ocr-review:
+    name: OpenCodeReview
+    if: >-
+      vars.ENABLE_AI_CODE_REVIEW == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, macOS, ARM64, VidiomTM]
+    timeout-minutes: 30
+    env:
+      HOME: /Users/jonathangadeaharder
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - name: Resolve previous review comments
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set +e
+          COMMENTS_JSON=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments" \
+            --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]") | "\(.id)\t\(.node_id)"' 2>/dev/null)
+          if [ -z "$COMMENTS_JSON" ]; then
+            echo "No previous comments to resolve."
+            exit 0
+          fi
+          while IFS=$'\t' read -r id node_id; do
+            [ -z "$id" ] && continue
+            gh api "repos/${REPO}/pulls/comments/${id}/replies" \
+              --method POST \
+              -f body="Resolved — superseded by a newer review run." \
+              > /dev/null 2>&1 || true
+            gh api graphql -f query="
+              mutation {
+                minimizeComment(input: {subjectId: \"${node_id}\"}) {
+                  minimizedComment { isMinimized minimizedReason }
+                }
+              }" > /dev/null 2>&1 || true
+          done <<< "$COMMENTS_JSON"
+          echo "Resolved previous comment(s)."
+      - name: Fetch base branch
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git fetch origin "$BASE_REF"
+      - name: Run OpenCodeReview
+        id: ocr
+        shell: bash {0}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set +e
+          export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"
+          export HOME=/Users/jonathangadeaharder
+          WORK_DIR="${{ github.workspace }}"
+          /usr/local/bin/ocr review --from "origin/$BASE_REF" --to HEAD --format json --audience agent --repo "$PWD" > "$WORK_DIR/ocr-output.json" 2>"$WORK_DIR/ocr-stderr.log"
+          EXIT_CODE=$?
+          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "::error::OpenCodeReview failed with exit code $EXIT_CODE"
+            echo "=== STDERR ==="
+            cat "$WORK_DIR/ocr-stderr.log"
+            echo "=== STDOUT ==="
+            cat "$WORK_DIR/ocr-output.json"
+            exit 1
+          fi
+          COMMENTS=$(jq '.summary.comments // 0' "$WORK_DIR/ocr-output.json" 2>/dev/null)
+          if [ -z "$COMMENTS" ] || [ "$COMMENTS" = "null" ]; then
+            echo "::error::OpenCodeReview produced invalid JSON output"
+            echo "=== STDOUT ==="
+            cat "$WORK_DIR/ocr-output.json"
+            echo "=== STDERR ==="
+            cat "$WORK_DIR/ocr-stderr.log"
+            exit 1
+          fi
+          echo "comments=$COMMENTS" >> "$GITHUB_OUTPUT"
+          echo "OCR found $COMMENTS comment(s) in this run"
+      - name: Post review comments
+        if: steps.ocr.outputs.comments != '0' && steps.ocr.outputs.exit_code == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          REVIEW_COMMENT_COUNT: ${{ steps.ocr.outputs.comments }}
+        run: |
+          set +e
+          HEAD_SHA=$(git rev-parse HEAD)
+          WORK_DIR="${{ github.workspace }}"
+          POSTED=0
+          FAILED=0
+          while IFS= read -r comment; do
+            PATH_VAL=$(echo "$comment" | jq -r '.path')
+            START_LINE=$(echo "$comment" | jq -r '.start_line // empty')
+            END_LINE=$(echo "$comment" | jq -r '.end_line')
+            CONTENT=$(echo "$comment" | jq -r '.content')
+            SUGGESTION=$(echo "$comment" | jq -r '.suggestion_code // empty')
+            if [ -n "$SUGGESTION" ]; then
+              BODY=$(printf '%s\n\n```suggestion\n%s\n```' "$CONTENT" "$SUGGESTION")
+            else
+              BODY="$CONTENT"
+            fi
+            SL_ARGS=()
+            if [ -n "$START_LINE" ] && [ "$START_LINE" != "$END_LINE" ]; then
+              SL_ARGS=(-F "start_line=$START_LINE")
+            fi
+            if gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments" \
+              -f body="$BODY" \
+              -f path="$PATH_VAL" \
+              "${SL_ARGS[@]}" \
+              -F line="$END_LINE" \
+              -f commit_id="$HEAD_SHA" \
+              -H "Accept: application/vnd.github+json" 2>/dev/null; then
+              POSTED=$((POSTED + 1))
+            else
+              FAILED=$((FAILED + 1))
+            fi
+          done < <(jq -c '.comments[]' "$WORK_DIR/ocr-output.json")
+          if [ "$FAILED" -gt 0 ] && [ "$POSTED" -eq 0 ]; then
+            SUMMARY=$(
+              jq -r \
+                '.comments[] | "**\(.path):\(.start_line)-\(.end_line)**\n\(.content)\n"' \
+                "$WORK_DIR/ocr-output.json"
+            )
+            BODY=$(
+              printf '## OpenCodeReview found %s issue(s)\n\n%s' \
+                "$REVIEW_COMMENT_COUNT" \
+                "$SUMMARY"
+            )
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              -f body="$BODY" \
+              2>/dev/null
+          fi
+          exit 0
+      - name: Gate
+        if: steps.ocr.outputs.comments != '0' && steps.ocr.outputs.exit_code == '0'
+        shell: bash {0}
+        env:
+          WORK_DIR: ${{ github.workspace }}
+        run: |
+          BLOCKING=$(jq '[.comments[] | select((.severity // "medium") as $s | ["low","nit","info"] | index($s) | not)] | length' "$WORK_DIR/ocr-output.json" 2>/dev/null)
+          if [ -z "$BLOCKING" ] || [ "$BLOCKING" = "null" ]; then
+            echo "::error::Failed to parse OpenCodeReview output for severity gating."
+            exit 1
+          fi
+          if [ "$BLOCKING" -gt 0 ]; then
+            echo "::error::OpenCodeReview found $BLOCKING finding(s) above low severity. Fix and re-review."
+            exit 1
+          fi
+          echo "OpenCodeReview found ${{ steps.ocr.outputs.comments }} issue(s), all low/nit. Advisory only."
+          exit 0
