@@ -38,13 +38,15 @@ def save_cache_metadata(metadata: CacheMetadata) -> None:
 
     entries = []
     for e in metadata.entries:
-        entries.append({
-            "source_file": e.source_file,
-            "srt_path": str(e.srt_path),
-            "language": e.language,
-            "subtitle_id": e.subtitle_id,
-            "downloaded_at": e.downloaded_at or datetime.now().isoformat(),
-        })
+        entries.append(
+            {
+                "source_file": e.source_file,
+                "srt_path": str(e.srt_path),
+                "language": e.language,
+                "subtitle_id": e.subtitle_id,
+                "downloaded_at": e.downloaded_at or datetime.now().isoformat(),
+            }
+        )
     METADATA_FILE.write_text(json.dumps({"entries": entries}, indent=2))
 
 
@@ -59,10 +61,12 @@ def find_cached_subtitle(source_file: str, language: str) -> Path | None:
 
 def add_cache_entry(source_file: str, srt_path: Path, language: str, subtitle_id: str = "") -> None:
     metadata = get_cache_metadata()
-    metadata.entries.append(CacheEntry(
-        source_file=source_file,
-        srt_path=srt_path,
-        language=language,
-        subtitle_id=subtitle_id,
-    ))
+    metadata.entries.append(
+        CacheEntry(
+            source_file=source_file,
+            srt_path=srt_path,
+            language=language,
+            subtitle_id=subtitle_id,
+        )
+    )
     save_cache_metadata(metadata)

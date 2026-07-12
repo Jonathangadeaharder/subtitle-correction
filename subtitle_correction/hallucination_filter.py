@@ -86,12 +86,14 @@ def parse_srt(srt_path: Path) -> list[SrtBlock]:
     for i, sub in enumerate(subs):
         start_sec = sub.start.ordinal / 1000.0
         end_sec = sub.end.ordinal / 1000.0
-        blocks.append(SrtBlock(
-            index=i + 1,
-            start_sec=start_sec,
-            end_sec=end_sec,
-            text=sub.text.strip(),
-        ))
+        blocks.append(
+            SrtBlock(
+                index=i + 1,
+                start_sec=start_sec,
+                end_sec=end_sec,
+                text=sub.text.strip(),
+            )
+        )
     return blocks
 
 
@@ -146,7 +148,9 @@ def run_vad(
     return timestamps
 
 
-def _overlaps_speech(block: SrtBlock, speech_segments: list[dict], overlap_threshold: float = 0.15) -> bool:
+def _overlaps_speech(
+    block: SrtBlock, speech_segments: list[dict], overlap_threshold: float = 0.15
+) -> bool:
     if not speech_segments:
         return True
     block_dur = block.duration
@@ -163,7 +167,9 @@ def _overlaps_speech(block: SrtBlock, speech_segments: list[dict], overlap_thres
     return False
 
 
-def filter_by_vad(blocks: list[SrtBlock], speech_segments: list[dict], stats: FilterStats) -> list[SrtBlock]:
+def filter_by_vad(
+    blocks: list[SrtBlock], speech_segments: list[dict], stats: FilterStats
+) -> list[SrtBlock]:
     kept = []
     for block in blocks:
         if _overlaps_speech(block, speech_segments):
@@ -193,7 +199,9 @@ def filter_by_confidence(
 
         if reasons and block.no_speech_prob > no_speech_threshold:
             stats.dropped_confidence += 1
-            stats.reasons.append(f"  Block {block.index}: confidence ({', '.join(reasons)}, text={block.text[:50]!r})")
+            stats.reasons.append(
+                f"  Block {block.index}: confidence ({', '.join(reasons)}, text={block.text[:50]!r})"
+            )
             continue
         kept.append(block)
     return kept
@@ -203,7 +211,9 @@ def _normalize_text(text: str) -> str:
     return re.sub(r"[^\w\s]", "", text.lower().strip())
 
 
-def filter_repetitions(blocks: list[SrtBlock], stats: FilterStats, repeat_count: int = 3) -> list[SrtBlock]:
+def filter_repetitions(
+    blocks: list[SrtBlock], stats: FilterStats, repeat_count: int = 3
+) -> list[SrtBlock]:
     if len(blocks) < repeat_count:
         return blocks
     kept = []
@@ -218,7 +228,9 @@ def filter_repetitions(blocks: list[SrtBlock], stats: FilterStats, repeat_count:
         if run_len >= repeat_count:
             for k in range(i, j):
                 stats.dropped_repetition += 1
-                stats.reasons.append(f"  Block {blocks[k].index}: repetition x{run_len} (text={blocks[k].text[:50]!r})")
+                stats.reasons.append(
+                    f"  Block {blocks[k].index}: repetition x{run_len} (text={blocks[k].text[:50]!r})"
+                )
             i = j
         else:
             kept.append(blocks[i])
@@ -226,14 +238,18 @@ def filter_repetitions(blocks: list[SrtBlock], stats: FilterStats, repeat_count:
     return kept
 
 
-def filter_hallucination_phrases(blocks: list[SrtBlock], stats: FilterStats, lang: str = "en") -> list[SrtBlock]:
+def filter_hallucination_phrases(
+    blocks: list[SrtBlock], stats: FilterStats, lang: str = "en"
+) -> list[SrtBlock]:
     phrases = COMMON_HALLUCINATION_PHRASES.get(lang, COMMON_HALLUCINATION_PHRASES["en"])
     kept = []
     for block in blocks:
         norm = _normalize_text(block.text)
         if norm in phrases:
             stats.dropped_hallucination_phrase += 1
-            stats.reasons.append(f"  Block {block.index}: hallucination phrase (text={block.text[:50]!r})")
+            stats.reasons.append(
+                f"  Block {block.index}: hallucination phrase (text={block.text[:50]!r})"
+            )
             continue
         kept.append(block)
     return kept
@@ -266,7 +282,8 @@ def filter_hallucinations(
 
     if enable_confidence and json_path and json_path.exists():
         blocks = filter_by_confidence(
-            blocks, stats,
+            blocks,
+            stats,
             no_speech_threshold=no_speech_threshold,
             logprob_threshold=logprob_threshold,
             compression_ratio_threshold=compression_ratio_threshold,

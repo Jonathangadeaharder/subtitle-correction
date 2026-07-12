@@ -3,13 +3,9 @@ from pathlib import Path
 
 from .models import ParsedFilename
 
-_SEASON_EPISODE_RE = re.compile(
-    r"[Ss](\d{1,2})\s*[Ee](\d{1,2})"
-)
+_SEASON_EPISODE_RE = re.compile(r"[Ss](\d{1,2})\s*[Ee](\d{1,2})")
 
-_YEAR_RE = re.compile(
-    r"(?:^|[\s.(])(\d{4})(?:[\s.)]|$)"
-)
+_YEAR_RE = re.compile(r"(?:^|[\s.(])(\d{4})(?:[\s.)]|$)")
 
 _COMMON_TAGS = re.compile(
     r"(?i)(?:_?compressed|_?mp4|_?mkv|720p|1080p|2160p|4k|"

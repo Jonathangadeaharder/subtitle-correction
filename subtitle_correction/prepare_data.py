@@ -21,6 +21,7 @@ def format_chat_text(tokenizer, system: str, whisper: str, reference: str, assis
     # Strip music notes and line breaks from training inputs/outputs
     def clean(s):
         return s.replace("♪", "").replace("\n", " ").replace("\r", "").strip()
+
     user_content = (
         f"{system}\n\n"
         f"Whisper transcription:\n{clean(whisper)}\n\n"
@@ -28,10 +29,9 @@ def format_chat_text(tokenizer, system: str, whisper: str, reference: str, assis
     )
     messages = [
         {"role": "user", "content": user_content},
-        {"role": "assistant", "content": clean(assistant)}
+        {"role": "assistant", "content": clean(assistant)},
     ]
     return tokenizer.apply_chat_template(messages, tokenize=False, enable_thinking=False)
-
 
 
 def align_casing_and_punctuation(source: str, target: str) -> str:
@@ -251,13 +251,15 @@ def _corrupt_text(text: str, rng: random.Random) -> str:
             stripped = stripped[:-1]
         word_lower = stripped.lower()
 
-        corruption_type = rng.choice(["homophone", "contraction", "phonetic", "similar", "repeat", "drop", "truncate"])
+        corruption_type = rng.choice(
+            ["homophone", "contraction", "phonetic", "similar", "repeat", "drop", "truncate"]
+        )
 
         if corruption_type == "homophone" and word_lower in HOMOPHONES:
             replacement = rng.choice(HOMOPHONES[word_lower])
             words[idx] = replacement + punctuation
         elif corruption_type == "contraction":
-            bigram = " ".join(words[idx:idx + 2]).lower().strip(".,!?;:\"'")
+            bigram = " ".join(words[idx : idx + 2]).lower().strip(".,!?;:\"'")
             if bigram in CONTRACTIONS:
                 replacement = rng.choice(CONTRACTIONS[bigram])
                 words[idx] = replacement + punctuation
@@ -275,7 +277,22 @@ def _corrupt_text(text: str, rng: random.Random) -> str:
         elif corruption_type == "repeat" and len(word_lower) > 2:
             repeat_count = rng.randint(2, 4)
             words[idx] = (stripped + " ") * repeat_count + stripped + punctuation
-        elif corruption_type == "drop" and word_lower in {"the", "a", "an", "is", "are", "was", "were", "in", "on", "at", "to", "of", "and", "or"}:
+        elif corruption_type == "drop" and word_lower in {
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "in",
+            "on",
+            "at",
+            "to",
+            "of",
+            "and",
+            "or",
+        }:
             words.pop(idx)
         elif corruption_type == "truncate" and len(word_lower) > 4:
             trunc_len = rng.randint(len(word_lower) - 2, len(word_lower) - 1)
@@ -308,21 +325,22 @@ def prepare_data_impl(
     console.print(f"Loaded {len(pairs)} raw pairs")
 
     valid_pairs = [
-        p for p in pairs
+        p
+        for p in pairs
         if p.get("whisper_text", "").strip() and p.get("corrected_text", "").strip()
     ]
     console.print(f"Valid pairs for training: {len(valid_pairs)}")
 
     import yaml
     from transformers import AutoTokenizer
-    
+
     config_path = Path(__file__).parent.parent / "config.yaml"
     model_name = "unsloth/gemma-4-E4B-it-UD-MLX-4bit"
     if config_path.exists():
         with open(config_path) as f:
             cfg = yaml.safe_load(f)
             model_name = cfg.get("model", model_name)
-            
+
     console.print(f"Loading tokenizer for model: {model_name}...")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
@@ -338,7 +356,9 @@ def prepare_data_impl(
         if not whisper_text or not corrected_text:
             continue
 
-        text = format_chat_text(tokenizer, SYSTEM_PROMPT, whisper_text, corrected_text, ground_truth)
+        text = format_chat_text(
+            tokenizer, SYSTEM_PROMPT, whisper_text, corrected_text, ground_truth
+        )
         examples.append({"text": text})
         correct_texts.add(corrected_text)
 
@@ -361,7 +381,7 @@ def prepare_data_impl(
                     c_words = corrupted.split()
                     c_split = min(split_idx, len(c_words))
                     corrupted = " ".join(c_words[:c_split]) + "\n" + " ".join(c_words[c_split:])
-                
+
                 if rng.random() < 0.30 and "♪" not in ref:
                     ref = f"♪ {ref} ♪"
                     out = ref
@@ -385,13 +405,12 @@ def prepare_data_impl(
         if rng.random() < 0.30 and "♪" not in ref:
             ref = f"♪ {ref} ♪"
             out = ref
-            
+
         text = format_chat_text(tokenizer, SYSTEM_PROMPT, ref, ref, out)
         examples.append({"text": text})
     console.print(f"Identity (stability) pairs: {identity_count}")
 
     console.print(f"[bold]Total examples: {len(examples)}[/bold]")
-
 
     rng.shuffle(examples)
 
