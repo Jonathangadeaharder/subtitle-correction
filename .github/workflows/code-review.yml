@@ -2,7 +2,6 @@ name: AI Code Review
 on:
   pull_request:
     branches: [main, master]
-  workflow_dispatch:
 permissions:
   contents: read
   pull-requests: write
@@ -14,11 +13,8 @@ jobs:
   ocr-review:
     name: OpenCodeReview
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (
-        vars.ENABLE_AI_CODE_REVIEW == 'true' &&
-        github.event.pull_request.head.repo.full_name == github.repository
-      )
+      vars.ENABLE_AI_CODE_REVIEW == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, macOS, ARM64, VidiomTM]
     timeout-minutes: 30
     env:
@@ -107,7 +103,7 @@ jobs:
           FAILED=0
           while IFS= read -r comment; do
             PATH_VAL=$(echo "$comment" | jq -r '.path')
-            START_LINE=$(echo "$comment" | jq -r '.start_line')
+            START_LINE=$(echo "$comment" | jq -r '.start_line // empty')
             END_LINE=$(echo "$comment" | jq -r '.end_line')
             CONTENT=$(echo "$comment" | jq -r '.content')
             SUGGESTION=$(echo "$comment" | jq -r '.suggestion_code // empty')
@@ -116,10 +112,14 @@ jobs:
             else
               BODY="$CONTENT"
             fi
+            SL_ARGS=()
+            if [ -n "$START_LINE" ] && [ "$START_LINE" != "$END_LINE" ]; then
+              SL_ARGS=(-F "start_line=$START_LINE")
+            fi
             if gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments" \
               -f body="$BODY" \
               -f path="$PATH_VAL" \
-              -F start_line="$START_LINE" \
+              "${SL_ARGS[@]}" \
               -F line="$END_LINE" \
               -f commit_id="$HEAD_SHA" \
               -H "Accept: application/vnd.github+json" 2>/dev/null; then
