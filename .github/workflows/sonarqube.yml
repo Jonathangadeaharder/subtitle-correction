@@ -1,0 +1,29 @@
+name: SonarCloud
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  sonarcloud:
+    name: SonarCloud Analysis
+    runs-on: [self-hosted, macOS, ARM64, VidiomTM]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      - name: Print failing quality gate conditions
+        if: failure()
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          curl -sS --max-time 10 "https://sonarcloud.io/api/qualitygates/project_status?projectKey=Jonathangadeaharder_subtitle-correction" \
+            -H "Authorization: Bearer $SONAR_TOKEN" \
+            | jq '.projectStatus.conditions[] | select(.status=="ERROR")' || true
