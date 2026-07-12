@@ -1,0 +1,34 @@
+name: SonarQube
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  sonarqube:
+    name: SonarQube
+    runs-on: [self-hosted, macOS, ARM64, VidiomTM]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: http://localhost:9001
+      - name: Print failing quality gate conditions
+        if: failure()
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          BASE="http://localhost:9001"
+          curl -sS --max-time 10 -u "$SONAR_TOKEN:" \
+            "$BASE/api/qualitygates/project_status?projectKey=VidiomTM_subtitle-correction" \
+            | jq '.projectStatus.conditions[] | select(.status=="ERROR")' || true
