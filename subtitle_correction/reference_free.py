@@ -11,8 +11,6 @@ from rich.console import Console
 
 from .srt_from_reference import unified_diff, write_preserving_timing
 
-__all__ = ["unified_diff", "write_preserving_timing"]
-
 console = Console()
 
 BASE_MODEL = "mlx-community/gemma-4-e4b-it-4bit"

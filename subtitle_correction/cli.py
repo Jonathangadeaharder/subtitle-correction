@@ -112,7 +112,7 @@ def pipeline_cmd(
     tv_only: bool = typer.Option(
         True, "--tv-only/--all", help="Only process TV episodes (SxxExx pattern)"
     ),
-    correct: bool = typer.Option(False, "--correct", help="Apply MLX corrector to Whisper output"),
+    correct: bool = typer.Option(True, "--correct/--no-correct", help="Apply MLX corrector to Whisper output"),
     corrector_model: Path = typer.Option(
         _default_corrector_model(), "--corrector-model", help="Path to fused MLX corrector model"
     ),

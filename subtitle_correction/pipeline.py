@@ -79,6 +79,9 @@ class FileMetadata:
     def load(self) -> None:
         if self.metadata_path.exists():
             self._data = json.loads(self.metadata_path.read_text())
+            # Migrate old "paired" status → "aligned" (PAIRED step removed).
+            if self._data.get("status") == "paired":
+                self._data["status"] = PipelineStep.ALIGNED
         else:
             self._data = {
                 "source_file": self.source_file,
