@@ -718,7 +718,7 @@ def test_process_file_skips_correction_when_low_alignment_score(
 
     correction_calls: list = []
 
-    def _fail_correction(*a, **k):
+    def _track_correction_call(*a, **k):
         correction_calls.append(True)
         return a[2]
 
@@ -729,7 +729,7 @@ def test_process_file_skips_correction_when_low_alignment_score(
     monkeypatch.setattr(pl, "run_alignment", _fake_alignment, raising=False)
     # Low alignment score -> correction gate skips the LLM step
     monkeypatch.setattr(pl, "compute_alignment_score", lambda *a, **k: 0.1, raising=False)
-    monkeypatch.setattr(pl, "run_correction", _fail_correction, raising=False)
+    monkeypatch.setattr(pl, "run_correction", _track_correction_call, raising=False)
 
     result = process_file(mp4, cache, language="de", filter_hallucinations=False)
     assert result["status"] == PipelineStep.ALIGNED

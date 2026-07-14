@@ -413,6 +413,12 @@ def process_file(
                     )
                     shutil.copy(str(corrected_srt), str(whisper_srt))
                     console.print("  [dim]Whisper output corrected[/dim]")
+                elif correct_whisper:
+                    console.print(
+                        f"  [yellow]Skipping correction: alignment score "
+                        f"{score:.2%} below threshold "
+                        f"{CORRECTION_MIN_ALIGNMENT:.2%}[/yellow]"
+                    )
                 meta.status = PipelineStep.ALIGNED
             else:
                 meta.error = "Missing SRT files for alignment"
