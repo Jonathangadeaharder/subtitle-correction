@@ -11,7 +11,6 @@ dependencies = [
     "guessit>=3.8",
     "mlx-lm>=0.23",
     "mlx-audio>=0.4",
-    "pyyaml>=6.0",
     "langdetect>=1.0",
 ]
 

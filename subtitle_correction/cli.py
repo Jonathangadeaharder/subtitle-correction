@@ -25,18 +25,11 @@ def align_cmd(
     subtitle_srt: Path = typer.Argument(..., help="Reference subtitle SRT file"),
     output: Path = typer.Option(None, "--output", "-o", help="Output aligned SRT path"),
     split_penalty: int = typer.Option(10, "--split-penalty", help="alass split penalty (0-1000)"),
-    skip_pairs: bool = typer.Option(False, "--skip-pairs", help="Skip training pair generation"),
-    pairs_output: Path = typer.Option(
-        Path("training_pairs.jsonl"), "--pairs-output", help="Training pairs JSONL path"
-    ),
-    min_score: float = typer.Option(0.5, "--min-score", help="Minimum alignment score for pairs"),
 ) -> None:
     """Align subtitle timestamps to match Whisper SRT."""
     from .align import (
         align_with_alass,
         compute_alignment_score,
-        generate_training_pairs,
-        append_pairs_to_jsonl,
         detect_srt_language,
         extract_language_from_filename,
     )
@@ -73,22 +66,6 @@ def align_cmd(
     console.print("\n[bold]Step 2: Computing alignment score...[/bold]")
     score = compute_alignment_score(whisper_srt, output)
     console.print(f"Alignment score: {score:.2%}")
-
-    if not skip_pairs and whisper_lang == sub_lang:
-        console.print("\n[bold]Step 3: Generating training pairs...[/bold]")
-        pairs = generate_training_pairs(
-            whisper_srt,
-            output,
-            source_file=whisper_srt.stem,
-            min_score=min_score,
-            alignment_score=score,
-        )
-        count = append_pairs_to_jsonl(pairs, pairs_output)
-        console.print(f"[green]Added {count} pairs to {pairs_output}[/green]")
-    elif whisper_lang != sub_lang:
-        console.print(
-            f"\n[yellow]Skipping pairs (language mismatch: {whisper_lang} vs {sub_lang})[/yellow]"
-        )
 
     console.print(f"\n[bold green]Done! Aligned SRT: {output}[/bold green]")
 
@@ -202,7 +179,7 @@ def pipeline_cmd(
             status = result["status"]
             if status == "skipped":
                 stats["skipped"] += 1
-            elif status in ("paired", "aligned"):
+            elif status == "aligned":
                 stats["completed"] += 1
                 console.print(f"  [green]Done ({status})[/green]")
             else:
@@ -250,7 +227,6 @@ def pipeline_status_cmd(
         PipelineStep.WHISPER_DONE: "yellow",
         PipelineStep.SUBTITLE_DOWNLOADED: "yellow",
         PipelineStep.ALIGNED: "green",
-        PipelineStep.PAIRED: "bold green",
         PipelineStep.FAILED: "bold red",
     }
 
@@ -270,34 +246,7 @@ def pipeline_status_cmd(
     console.print(table)
 
 
-# --- FINETUNING / CORRECTION COMMANDS ---
-@app.command(name="prepare")
-def prepare_cmd(
-    input_file: Path = typer.Option(..., "--input", "-i", help="Training pairs JSONL file"),
-    output_dir: Path = typer.Option(Path("data"), "--output-dir", "-o", help="Output directory"),
-    val_split: float = typer.Option(0.1, "--val-split", help="Validation split ratio"),
-    seed: int = typer.Option(42, "--seed", help="Random seed"),
-    augment: int = typer.Option(
-        3, "--augment", help="Number of synthetic corruptions per correct text"
-    ),
-    identity_ratio: float = typer.Option(
-        0.15, "--identity-ratio", help="Ratio of identity examples"
-    ),
-) -> None:
-    """Prepare and augment training dataset for instruction tuning."""
-    from .prepare_data import prepare_data_impl
-
-    prepare_data_impl(input_file, output_dir, val_split, seed, augment, identity_ratio)
-
-
-@app.command(name="train")
-def train_cmd() -> None:
-    """Train the correction model using MLX LoRA fine-tuning."""
-    from .train import train_impl
-
-    train_impl()
-
-
+# --- CORRECTION COMMANDS ---
 @app.command(name="correct")
 def correct_cmd(
     text: str = typer.Option(None, "--text", "-t", help="Text to correct"),
@@ -331,43 +280,6 @@ def correct_cmd(
     else:
         console.print("[red]Provide --text or --input-file[/red]")
         raise typer.Exit(code=1)
-
-
-# --- EVALUATION COMMANDS ---
-@app.command(name="create-dataset")
-def create_dataset_cmd(
-    subcache_dir: Path = typer.Option(
-        Path.home() / "Downloads" / ".subcache", "--subcache-dir", help="Subcache folder"
-    ),
-    output_dir: Path = typer.Option(
-        Path(__file__).parent.parent / "evaluation", "--output-dir", help="Output directory"
-    ),
-    max_slices: int = typer.Option(200, "--max-slices", help="Maximum slices to crop"),
-) -> None:
-    """Create evaluation dataset from cached runs by extracting audio slices."""
-    from .evaluate import create_dataset_impl
-
-    create_dataset_impl(subcache_dir, output_dir, max_slices)
-
-
-@app.command(name="evaluate")
-def evaluate_cmd(
-    model: str = typer.Option(
-        "mlx-community/gemma-4-e4b-it-4bit", "--model", "-m", help="Base model"
-    ),
-    adapter_path: Path = typer.Option(None, "--adapter-path", "-a", help="LoRA adapter path"),
-    fused: bool = typer.Option(True, "--fused/--adapter", help="Use fused model or adapter"),
-    dataset_path: Path = typer.Option(
-        Path(__file__).parent.parent / "evaluation" / "dataset.jsonl",
-        "--dataset-path",
-        help="Dataset path",
-    ),
-    limit: int | None = typer.Option(None, "--limit", help="Evaluate only the first N cases"),
-) -> None:
-    """Evaluate correction accuracy on the created slice dataset."""
-    from .evaluate import evaluate_model_impl
-
-    evaluate_model_impl(model, adapter_path, fused, dataset_path, limit)
 
 
 @app.command(name="srt-from-reference")

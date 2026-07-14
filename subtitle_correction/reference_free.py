@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
-import difflib
 import re
 from pathlib import Path
 
 import pysrt
 from rich.console import Console
+
+from .srt_from_reference import unified_diff, write_preserving_timing
+
+__all__ = ["unified_diff", "write_preserving_timing"]
 
 console = Console()
 
@@ -89,20 +92,6 @@ def _strip_model_noise(text: str, original: str) -> str:
     return text.strip()
 
 
-def write_preserving_timing(input_path: Path, output_path: Path, new_texts: list[str]) -> None:
-    raw = input_path.read_text(encoding="utf-8")
-    blocks = re.split(r"\r?\n\r?\n", raw.lstrip("\ufeff").strip())
-    if len(blocks) != len(new_texts):
-        raise ValueError(
-            f"block count {len(blocks)} != corrected count {len(new_texts)}; refusing to write"
-        )
-    rebuilt = []
-    for block, new_text in zip(blocks, new_texts):
-        lines = block.split("\n")
-        rebuilt.append("\n".join(lines[:2]) + "\n" + new_text)
-    output_path.write_text("\n\n".join(rebuilt) + "\n", encoding="utf-8")
-
-
 class ContextCorrector:
     def __init__(self, model_name: str = BASE_MODEL, temp: float = 0.0):
         from mlx_lm.sample_utils import make_sampler
@@ -171,14 +160,6 @@ def correct_srt(
         corrected_texts.append(out)
     write_preserving_timing(input_path, output_path, corrected_texts)
     return changed, len(texts)
-
-
-def unified_diff(original_srt: Path | str, corrected_srt: Path | str) -> str:
-    a = Path(str(original_srt)).read_text(encoding="utf-8").splitlines(keepends=True)
-    b = Path(str(corrected_srt)).read_text(encoding="utf-8").splitlines(keepends=True)
-    return "".join(
-        difflib.unified_diff(a, b, fromfile=str(original_srt), tofile=str(corrected_srt))
-    )
 
 
 def self_check() -> None:

@@ -9,14 +9,13 @@ from rich.console import Console
 
 from .scraper import OpenSubtitlesScraper
 from .parser import smart_parse
-from .align import (
-    compute_alignment_score,
-    generate_training_pairs,
-    append_pairs_to_jsonl,
-)
+from .align import compute_alignment_score
 from .hallucination_filter import filter_hallucinations
 
 console = Console()
+
+CORRECTION_MIN_ALIGNMENT = 0.5
+
 
 
 class PipelineStep:
@@ -25,7 +24,6 @@ class PipelineStep:
     WHISPER_DONE = "whisper_done"
     SUBTITLE_DOWNLOADED = "subtitle_downloaded"
     ALIGNED = "aligned"
-    PAIRED = "paired"
     FAILED = "failed"
 
 
@@ -93,7 +91,7 @@ class FileMetadata:
         self.metadata_path.write_text(json.dumps(self._data, indent=2))
 
     def is_complete(self) -> bool:
-        return self.status in (PipelineStep.PAIRED, PipelineStep.ALIGNED)
+        return self.status == PipelineStep.ALIGNED
 
     def needs_step(self, step: str) -> bool:
         order = [
@@ -102,7 +100,6 @@ class FileMetadata:
             PipelineStep.WHISPER_DONE,
             PipelineStep.SUBTITLE_DOWNLOADED,
             PipelineStep.ALIGNED,
-            PipelineStep.PAIRED,
         ]
         current_idx = order.index(self.status) if self.status in order else -1
         step_idx = order.index(step) if step in order else len(order)
@@ -333,7 +330,7 @@ def process_file(
     language: str = "en",
     skip_existing: bool = True,
     scraper=None,
-    correct_whisper: bool = False,
+    correct_whisper: bool = True,
     corrector_model: str = "runs/subtitle-corrector-4b-fused",
     filter_hallucinations: bool = True,
 ) -> dict:
@@ -357,7 +354,6 @@ def process_file(
     detected_lang = meta.whisper_lang or whisper_lang or "en"
     sub_srt = work_dir / f"opensubtitles.{detected_lang}.srt"
     aligned_srt = work_dir / "aligned.srt"
-    pairs_file = cache_root / "training_pairs.jsonl"
 
     try:
         if meta.needs_step(PipelineStep.AUDIO_EXTRACTED):
@@ -401,7 +397,10 @@ def process_file(
             console.print("  [dim]Aligning timestamps...[/dim]")
             if whisper_srt.exists() and sub_srt.exists():
                 run_alignment(whisper_srt, sub_srt, aligned_srt)
-                if correct_whisper:
+                score = compute_alignment_score(whisper_srt, aligned_srt)
+                meta.alignment_score = score
+                console.print(f"  [dim]Alignment score: {score:.2%}[/dim]")
+                if correct_whisper and score >= CORRECTION_MIN_ALIGNMENT:
                     console.print(
                         "  [dim]Correcting Whisper output with MLX model and reference...[/dim]"
                     )
@@ -419,32 +418,6 @@ def process_file(
                 meta.error = "Missing SRT files for alignment"
                 meta.status = PipelineStep.FAILED
                 return {"status": "alignment_failed", "dir": str(work_dir)}
-
-        if meta.needs_step(PipelineStep.PAIRED):
-            console.print("  [dim]Generating training pairs...[/dim]")
-            if whisper_srt.exists() and aligned_srt.exists():
-                score = compute_alignment_score(whisper_srt, aligned_srt)
-                meta.alignment_score = score
-                w_lang = meta.whisper_lang or whisper_lang or "en"
-                s_lang = meta.subtitle_lang or w_lang
-                meta.whisper_lang = w_lang
-                meta.subtitle_lang = s_lang
-
-                if w_lang == s_lang:
-                    pairs = generate_training_pairs(
-                        whisper_srt,
-                        aligned_srt,
-                        source_file=mp4_path.name,
-                        alignment_score=score,
-                    )
-                    count = append_pairs_to_jsonl(pairs, pairs_file)
-                    console.print(f"  [green]{count} training pairs generated[/green]")
-                else:
-                    console.print(
-                        f"  [yellow]Language mismatch ({w_lang} vs {s_lang}), skipping pairs[/yellow]"
-                    )
-
-                meta.status = PipelineStep.PAIRED
 
     except Exception as e:
         meta.error = str(e)

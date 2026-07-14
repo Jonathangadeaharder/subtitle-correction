@@ -145,14 +145,14 @@ def align_reference_to_srt(
         cursor += len(span)
     assert cursor == len(ref_tokens)
 
-    _write_preserving_timing(Path(str(whisper_srt)), out, corrected_texts)
+    write_preserving_timing(Path(str(whisper_srt)), out, corrected_texts)
 
     # 3. Post-write: cue count + timestamps identical to the source SRT.
     _assert_timing_preserved(Path(str(whisper_srt)), out)
     return out
 
 
-def _write_preserving_timing(src_srt: Path, out: Path, new_texts: list[str]) -> None:
+def write_preserving_timing(src_srt: Path, out: Path, new_texts: list[str]) -> None:
     """Rebuild the SRT replacing ONLY each block's text payload.
 
     Index and timing lines are copied verbatim from the source so they remain
