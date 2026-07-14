@@ -1,18 +1,14 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
 from subtitle_correction.align import (
-    _is_phonetic_mishearing,
     _is_watermark,
-    append_pairs_to_jsonl,
     compute_alignment_score,
     detect_srt_language,
     extract_language_from_filename,
-    generate_training_pairs,
 )
 
 
@@ -105,124 +101,6 @@ def test_compute_alignment_score_no_positive_starts(tmp_path: Path) -> None:
     _write_srt(whisper, [(1, "00:00:00,000 --> 00:00:01,000", "x")])
     _write_srt(aligned, [(1, "00:00:01,000 --> 00:00:02,000", "y")])
     assert compute_alignment_score(whisper, aligned) == 0.0
-
-
-def test_generate_training_pairs_skips_low_alignment_score(tmp_path: Path) -> None:
-    whisper = tmp_path / "w.srt"
-    aligned = tmp_path / "a.srt"
-    _write_srt(whisper, [(1, "00:00:01,000 --> 00:00:02,000", "hello world there")])
-    _write_srt(aligned, [(1, "00:00:01,000 --> 00:00:02,000", "hello world friend")])
-    pairs = generate_training_pairs(whisper, aligned, alignment_score=0.1, min_score=0.5)
-    assert pairs == []
-
-
-def test_generate_training_pairs_keeps_mishearing(tmp_path: Path) -> None:
-    whisper = tmp_path / "w.srt"
-    aligned = tmp_path / "a.srt"
-    _write_srt(
-        whisper,
-        [
-            (1, "00:00:01,000 --> 00:00:02,000", "the cat sat on the mat"),
-        ],
-    )
-    _write_srt(
-        aligned,
-        [
-            (1, "00:00:01,000 --> 00:00:02,000", "the bat sat on the mat"),
-        ],
-    )
-    pairs = generate_training_pairs(whisper, aligned, alignment_score=0.9)
-    assert len(pairs) == 1
-    assert pairs[0]["whisper_text"] == "the cat sat on the mat"
-    assert pairs[0]["corrected_text"] == "the bat sat on the mat"
-    assert pairs[0]["source_file"] == ""
-    assert pairs[0]["alignment_score"] == 0.9
-
-
-def test_generate_training_pairs_skips_identical_text(tmp_path: Path) -> None:
-    whisper = tmp_path / "w.srt"
-    aligned = tmp_path / "a.srt"
-    _write_srt(whisper, [(1, "00:00:01,000 --> 00:00:02,000", "same text here")])
-    _write_srt(aligned, [(1, "00:00:01,000 --> 00:00:02,000", "same text here")])
-    pairs = generate_training_pairs(whisper, aligned, alignment_score=1.0)
-    assert pairs == []
-
-
-def test_generate_training_pairs_skips_watermarks(tmp_path: Path) -> None:
-    whisper = tmp_path / "w.srt"
-    aligned = tmp_path / "a.srt"
-    _write_srt(whisper, [(1, "00:00:01,000 --> 00:00:02,000", "Subtitle by ZDF")])
-    _write_srt(aligned, [(1, "00:00:01,000 --> 00:00:02,000", "Subtitle by ARD")])
-    pairs = generate_training_pairs(whisper, aligned, alignment_score=1.0)
-    assert pairs == []
-
-
-def test_generate_training_pairs_skips_too_short(tmp_path: Path) -> None:
-    whisper = tmp_path / "w.srt"
-    aligned = tmp_path / "a.srt"
-    _write_srt(whisper, [(1, "00:00:01,000 --> 00:00:02,000", "ab")])
-    _write_srt(aligned, [(1, "00:00:01,000 --> 00:00:02,000", "cd")])
-    pairs = generate_training_pairs(whisper, aligned, alignment_score=1.0)
-    assert pairs == []
-
-
-def test_generate_training_pairs_skips_unrelated(tmp_path: Path) -> None:
-    whisper = tmp_path / "w.srt"
-    aligned = tmp_path / "a.srt"
-    _write_srt(whisper, [(1, "00:00:01,000 --> 00:00:02,000", "banana split sundae")])
-    _write_srt(aligned, [(1, "00:00:01,000 --> 00:00:02,000", "computer keyboard mouse")])
-    pairs = generate_training_pairs(whisper, aligned, alignment_score=1.0, overlap_threshold=0.05)
-    assert pairs == []
-
-
-def test_generate_training_pairs_skips_distant_blocks(tmp_path: Path) -> None:
-    whisper = tmp_path / "w.srt"
-    aligned = tmp_path / "a.srt"
-    # aligned starts ~1 hour after whisper -> best_diff > 4000 ms
-    _write_srt(whisper, [(1, "00:00:01,000 --> 00:00:02,000", "the cat sat on the mat")])
-    _write_srt(aligned, [(1, "01:00:01,000 --> 01:00:02,000", "the bat sat on the mat")])
-    pairs = generate_training_pairs(whisper, aligned, alignment_score=1.0)
-    assert pairs == []
-
-
-def test_generate_training_pairs_with_empty_blocks(tmp_path: Path) -> None:
-    whisper = tmp_path / "w.srt"
-    aligned = tmp_path / "a.srt"
-    _write_srt(whisper, [(1, "00:00:01,000 --> 00:00:02,000", "")])
-    _write_srt(aligned, [(1, "00:00:01,000 --> 00:00:02,000", "some text here")])
-    pairs = generate_training_pairs(whisper, aligned, alignment_score=1.0)
-    assert pairs == []
-
-
-def test_append_pairs_to_jsonl_empty_returns_zero(tmp_path: Path) -> None:
-    out = tmp_path / "pairs.jsonl"
-    assert append_pairs_to_jsonl([], out) == 0
-    assert not out.exists()
-
-
-def test_append_pairs_to_jsonl_appends(tmp_path: Path) -> None:
-    out = tmp_path / "pairs.jsonl"
-    out.write_text(json.dumps({"whisper_text": "old"}) + "\n", encoding="utf-8")
-    pairs = [{"whisper_text": "a", "corrected_text": "b"}]
-    count = append_pairs_to_jsonl(pairs, out)
-    assert count == 1
-    lines = out.read_text(encoding="utf-8").strip().split("\n")
-    assert len(lines) == 2
-    assert json.loads(lines[1])["corrected_text"] == "b"
-
-
-def test_is_phonetic_mishearing_true_for_close_words() -> None:
-    assert _is_phonetic_mishearing({"hard"}, {"heard"}, "it was hard", "it was heard") is True
-
-
-def test_is_phonetic_mishearing_false_for_distant_words() -> None:
-    assert _is_phonetic_mishearing({"banana"}, {"computer"}, "banana", "computer") is False
-
-
-def test_is_phonetic_mishearing_false_for_empty() -> None:
-    assert _is_phonetic_mishearing(set(), {"a"}, "x", "a") is False
-    assert _is_phonetic_mishearing({"a"}, set(), "a", "x") is False
-    assert _is_phonetic_mishearing(set(), set(), "", "") is False
 
 
 def test_align_with_alass_missing_binary_raises(tmp_path: Path) -> None:

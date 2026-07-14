@@ -57,15 +57,13 @@ def test_cli_align_alass_failure_exits(tmp_path: Path, monkeypatch: pytest.Monke
     assert result.exit_code == 1
 
 
-def test_cli_align_success_with_pairs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_align_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     whisper = tmp_path / "w.srt"
     sub = tmp_path / "s.srt"
     out = tmp_path / "out.srt"
-    pairs_out = tmp_path / "pairs.jsonl"
     _write_srt(whisper, [("1", "00:00:01,000 --> 00:00:02,000", "the cat sat")])
     _write_srt(sub, [("1", "00:00:01,000 --> 00:00:02,000", "the cat ran")])
 
-    import subtitle_correction.cli as cli_mod
     import subtitle_correction.align as align_mod
 
     def _fake_align(ref, bad, output, split_penalty=10):
@@ -73,52 +71,15 @@ def test_cli_align_success_with_pairs(tmp_path: Path, monkeypatch: pytest.Monkey
         return output
 
     monkeypatch.setattr(align_mod, "align_with_alass", _fake_align, raising=False)
-    monkeypatch.setattr(cli_mod, "compute_alignment_score", lambda *a, **k: 0.9, raising=False)
-    monkeypatch.setattr(
-        cli_mod,
-        "generate_training_pairs",
-        lambda *a, **k: [{"whisper_text": "the cat sat", "corrected_text": "the cat ran"}],
-        raising=False,
-    )
-    # detect_srt_language is imported inside the command from .align
     monkeypatch.setattr(align_mod, "detect_srt_language", lambda p: "en", raising=False)
     monkeypatch.setattr(align_mod, "extract_language_from_filename", lambda p: "en", raising=False)
 
     result = CliRunner().invoke(
         app,
-        ["align", str(whisper), str(sub), "--output", str(out), "--pairs-output", str(pairs_out)],
+        ["align", str(whisper), str(sub), "--output", str(out)],
     )
     assert result.exit_code == 0, result.stdout
-    assert pairs_out.exists()
-
-
-def test_cli_align_language_mismatch_skips_pairs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    whisper = tmp_path / "w.srt"
-    sub = tmp_path / "s.srt"
-    out = tmp_path / "out.srt"
-    _write_srt(whisper, [("1", "00:00:01,000 --> 00:00:02,000", "the cat sat")])
-    _write_srt(sub, [("1", "00:00:01,000 --> 00:00:02,000", "the cat ran")])
-
-    import subtitle_correction.align as align_mod
-
-    monkeypatch.setattr(
-        align_mod,
-        "align_with_alass",
-        lambda ref, bad, output, split_penalty=10: (
-            output.write_text(sub.read_text(encoding="utf-8"), encoding="utf-8") or output
-        ),
-        raising=False,
-    )
-    monkeypatch.setattr(align_mod, "detect_srt_language", lambda p: "en", raising=False)
-    monkeypatch.setattr(align_mod, "extract_language_from_filename", lambda p: "de", raising=False)
-
-    result = CliRunner().invoke(
-        app,
-        ["align", str(whisper), str(sub), "--output", str(out), "--skip-pairs"],
-    )
-    assert result.exit_code == 0
+    assert out.exists()
 
 
 # ---------------- scrape command ----------------
@@ -199,7 +160,7 @@ def test_cli_pipeline_single_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         cli_mod,
         "process_file",
-        lambda *a, **k: {"status": "paired", "dir": str(tmp_path)},
+        lambda *a, **k: {"status": "aligned", "dir": str(tmp_path)},
         raising=False,
     )
 
@@ -274,7 +235,7 @@ def test_cli_pipeline_status_with_entries(tmp_path: Path) -> None:
         json.dumps(
             {
                 "source_file": "movie.mp4",
-                "status": "paired",
+                "status": "aligned",
                 "whisper_lang": "en",
                 "subtitle_lang": "de",
                 "alignment_score": 0.8,
@@ -289,74 +250,6 @@ def test_cli_pipeline_status_with_entries(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0
     assert "movie" in result.stdout
-
-
-# ---------------- prepare command ----------------
-
-
-def test_cli_prepare(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    input_file = tmp_path / "pairs.jsonl"
-    input_file.write_text(
-        json.dumps({"whisper_text": "hi", "corrected_text": "hi"}) + "\n",
-        encoding="utf-8",
-    )
-    out_dir = tmp_path / "out"
-
-    # The command imports prepare_data_impl at call time; patch the source module.
-    import subtitle_correction.prepare_data as pd_mod
-
-    captured: dict = {}
-
-    def _fake_prepare(input_file, output_dir, val_split, seed, augment, identity_ratio):
-        captured.update(
-            input_file=input_file,
-            output_dir=output_dir,
-            val_split=val_split,
-            seed=seed,
-            augment=augment,
-            identity_ratio=identity_ratio,
-        )
-        (output_dir).mkdir(parents=True, exist_ok=True)
-        (output_dir / "train.jsonl").write_text("{}", encoding="utf-8")
-
-    monkeypatch.setattr(pd_mod, "prepare_data_impl", _fake_prepare, raising=False)
-
-    result = CliRunner().invoke(
-        app,
-        [
-            "prepare",
-            "--input",
-            str(input_file),
-            "--output-dir",
-            str(out_dir),
-            "--val-split",
-            "0.2",
-            "--augment",
-            "5",
-        ],
-    )
-    assert result.exit_code == 0, result.stdout
-    assert captured["val_split"] == 0.2
-    assert captured["augment"] == 5
-
-
-# ---------------- train command ----------------
-
-
-def test_cli_train(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The command imports train_impl at call time via `from .train import train_impl`;
-    # patch the source module to avoid invoking real mlx_lm subprocess.
-    import subtitle_correction.train as train_mod
-
-    called: list = []
-
-    def _fake_train_impl():
-        called.append(True)
-
-    monkeypatch.setattr(train_mod, "train_impl", _fake_train_impl, raising=False)
-    result = CliRunner().invoke(app, ["train"])
-    assert result.exit_code == 0
-    assert called
 
 
 # ---------------- correct command ----------------
@@ -401,67 +294,6 @@ def test_cli_correct_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     )
     assert result.exit_code == 0, result.stdout
     assert out.exists()
-
-
-# ---------------- create-dataset command ----------------
-
-
-def test_cli_create_dataset_missing_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import subtitle_correction.evaluate as eval_mod
-
-    def _fake_create(subcache_dir, output_dir, max_slices):
-        import typer
-
-        raise typer.Exit(code=1)
-
-    monkeypatch.setattr(eval_mod, "create_dataset_impl", _fake_create, raising=False)
-    result = CliRunner().invoke(
-        app,
-        ["create-dataset", "--subcache-dir", str(tmp_path / "missing")],
-    )
-    assert result.exit_code == 1
-
-
-def test_cli_create_dataset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import subtitle_correction.evaluate as eval_mod
-
-    captured: dict = {}
-
-    def _fake_create(subcache_dir, output_dir, max_slices):
-        captured.update(subcache_dir=subcache_dir, output_dir=output_dir, max_slices=max_slices)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / "dataset.jsonl").write_text("{}", encoding="utf-8")
-
-    monkeypatch.setattr(eval_mod, "create_dataset_impl", _fake_create, raising=False)
-    result = CliRunner().invoke(
-        app,
-        ["create-dataset", "--subcache-dir", str(tmp_path), "--max-slices", "50"],
-    )
-    assert result.exit_code == 0, result.stdout
-    assert captured["max_slices"] == 50
-
-
-# ---------------- evaluate command ----------------
-
-
-def test_cli_evaluate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import subtitle_correction.evaluate as eval_mod
-
-    dataset = tmp_path / "dataset.jsonl"
-    dataset.write_text("", encoding="utf-8")
-    captured: dict = {}
-
-    def _fake_eval(model, adapter_path, fused, dataset_path, limit):
-        captured.update(model=model, fused=fused, dataset_path=dataset_path, limit=limit)
-        return None
-
-    monkeypatch.setattr(eval_mod, "evaluate_model_impl", _fake_eval, raising=False)
-    result = CliRunner().invoke(
-        app,
-        ["evaluate", "--dataset-path", str(dataset), "--limit", "5"],
-    )
-    assert result.exit_code == 0, result.stdout
-    assert captured["limit"] == 5
 
 
 # ---------------- srt-from-reference command (already tested) ----------------

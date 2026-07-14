@@ -7,7 +7,7 @@ import pytest
 from subtitle_correction.srt_from_reference import (
     _assign_reference_to_cues,
     _self_check,
-    _write_preserving_timing,
+    write_preserving_timing,
     align_reference_to_srt,
     strip_markdown_prose,
     unified_diff,
@@ -34,7 +34,7 @@ def test_write_preserving_timing_count_mismatch_raises(tmp_path: Path) -> None:
     out = tmp_path / "out.srt"
     src.write_text("1\n00:00:01,000 --> 00:00:02,000\nold\n", encoding="utf-8")
     with pytest.raises(ValueError, match="block count"):
-        _write_preserving_timing(src, out, ["a", "b"])
+        write_preserving_timing(src, out, ["a", "b"])
 
 
 def test_write_preserving_timing_replaces_text(tmp_path: Path) -> None:
@@ -44,7 +44,7 @@ def test_write_preserving_timing_replaces_text(tmp_path: Path) -> None:
         "1\n00:00:01,000 --> 00:00:02,000\nold1\n\n2\n00:00:02,000 --> 00:00:03,000\nold2\n",
         encoding="utf-8",
     )
-    _write_preserving_timing(src, out, ["new1", "new2"])
+    write_preserving_timing(src, out, ["new1", "new2"])
     text = out.read_text(encoding="utf-8")
     assert "00:00:01,000 --> 00:00:02,000" in text
     assert "00:00:02,000 --> 00:00:03,000" in text

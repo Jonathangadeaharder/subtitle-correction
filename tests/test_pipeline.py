@@ -116,13 +116,11 @@ def test_file_metadata_setters_persist(tmp_path: Path) -> None:
     assert meta2.error == "boom"
 
 
-def test_is_complete_paired_or_aligned(tmp_path: Path) -> None:
+def test_is_complete_aligned(tmp_path: Path) -> None:
     meta = FileMetadata(tmp_path / "w", "m.mp4")
     meta.load()
     assert meta.is_complete() is False
     meta.status = PipelineStep.ALIGNED
-    assert meta.is_complete() is True
-    meta.status = PipelineStep.PAIRED
     assert meta.is_complete() is True
     meta.status = PipelineStep.FAILED
     assert meta.is_complete() is False
@@ -544,7 +542,7 @@ def test_process_file_skips_complete(tmp_path: Path) -> None:
     (work / "metadata.json").write_text(
         json.dumps(
             {
-                "status": PipelineStep.PAIRED,
+                "status": PipelineStep.ALIGNED,
                 "source_file": "movie.mp4",
             }
         ),
@@ -616,17 +614,26 @@ def test_process_file_full_pipeline_success(
         out.write_text("1\n00:00:00,000 --> 00:00:01,000\nthe bat\n", encoding="utf-8")
         return out
 
+    correction_calls: list = []
+
+    def _fake_correction(input_srt, reference_srt, output_srt, model_path="x", fused=True):
+        correction_calls.append(True)
+        output_srt.write_text(
+            "1\n00:00:00,000 --> 00:00:01,000\nthe corrected bat\n", encoding="utf-8"
+        )
+        return output_srt
+
     monkeypatch.setattr(pl, "extract_audio", _fake_extract_audio, raising=False)
     monkeypatch.setattr(pl, "run_whisper", _fake_whisper, raising=False)
     monkeypatch.setattr(pl, "run_hallucination_filter", lambda *a, **k: a[2], raising=False)
     monkeypatch.setattr(pl, "run_opensubtitles_download", _fake_download, raising=False)
     monkeypatch.setattr(pl, "run_alignment", _fake_alignment, raising=False)
     monkeypatch.setattr(pl, "compute_alignment_score", lambda *a, **k: 0.9, raising=False)
-    monkeypatch.setattr(pl, "generate_training_pairs", lambda *a, **k: [{"w": "x"}], raising=False)
-    monkeypatch.setattr(pl, "append_pairs_to_jsonl", lambda pairs, path: len(pairs), raising=False)
+    monkeypatch.setattr(pl, "run_correction", _fake_correction, raising=False)
 
     result = process_file(mp4, cache, language="en", filter_hallucinations=False)
-    assert result["status"] == PipelineStep.PAIRED
+    assert result["status"] == PipelineStep.ALIGNED
+    assert correction_calls == [True]
 
 
 def test_process_file_alignment_missing_srt_returns_failed(
@@ -681,7 +688,7 @@ def test_process_file_exception_returns_failed(
     assert "extract failed" in result["error"]
 
 
-def test_process_file_language_mismatch_skips_pairs(
+def test_process_file_skips_correction_when_low_alignment_score(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cache = tmp_path / "cache"
@@ -709,14 +716,21 @@ def test_process_file_language_mismatch_skips_pairs(
         out.write_text("1\n00:00:00,000 --> 00:00:01,000\nthe bat\n", encoding="utf-8")
         return out
 
+    correction_calls: list = []
+
+    def _track_correction_call(*a, **k):
+        correction_calls.append(True)
+        return a[2]
+
     monkeypatch.setattr(pl, "extract_audio", _fake_extract_audio, raising=False)
     monkeypatch.setattr(pl, "run_whisper", _fake_whisper, raising=False)
     monkeypatch.setattr(pl, "run_hallucination_filter", lambda *a, **k: a[2], raising=False)
     monkeypatch.setattr(pl, "run_opensubtitles_download", _fake_download, raising=False)
     monkeypatch.setattr(pl, "run_alignment", _fake_alignment, raising=False)
-    monkeypatch.setattr(pl, "compute_alignment_score", lambda *a, **k: 0.9, raising=False)
+    # Low alignment score -> correction gate skips the LLM step
+    monkeypatch.setattr(pl, "compute_alignment_score", lambda *a, **k: 0.1, raising=False)
+    monkeypatch.setattr(pl, "run_correction", _track_correction_call, raising=False)
 
-    # Force a language mismatch: whisper lang en, subtitle lang de
     result = process_file(mp4, cache, language="de", filter_hallucinations=False)
-    # Status should still be PAIRED (pairs skipped but step completes)
-    assert result["status"] == PipelineStep.PAIRED
+    assert result["status"] == PipelineStep.ALIGNED
+    assert correction_calls == []
