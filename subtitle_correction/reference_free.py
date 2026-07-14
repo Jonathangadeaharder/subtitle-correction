@@ -9,7 +9,7 @@ from pathlib import Path
 import pysrt
 from rich.console import Console
 
-from .srt_from_reference import unified_diff, write_preserving_timing
+from .srt_from_reference import unified_diff, write_preserving_timing  # noqa: F401 (re-export)
 
 console = Console()
 
