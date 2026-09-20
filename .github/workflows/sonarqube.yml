@@ -3,8 +3,9 @@ name: SonarQube
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 
 permissions:
   contents: read
@@ -13,16 +14,50 @@ permissions:
 jobs:
   sonarqube:
     name: SonarQube
+    # Dependabot pull_request runs never receive secrets (GitHub platform
+    # behavior), so PR scans run via workflow_run, which executes in the
+    # default-branch context and always has secret access.
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: [self-hosted, macOS, ARM64, VidiomTM]
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
+      - name: Derive scan arguments
+        id: scan
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "${{ github.event_name }}" != "workflow_run" ]; then
+            ARGS=""
+          else
+            BRANCH=$(jq -r '.workflow_run.head_branch' "$GITHUB_EVENT_PATH")
+            PR_NUMBER=$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")
+            if [ -z "$PR_NUMBER" ]; then
+              PR_NUMBER=$(gh pr list -R "$REPO" --head "$BRANCH" --state open \
+                --json number --jq '.[0].number // empty')
+            fi
+            if [ -z "$PR_NUMBER" ]; then
+              echo "::error::No open PR found for branch '$BRANCH'; cannot attribute the scan to a pull request."
+              exit 1
+            fi
+            ARGS="-Dsonar.pullrequest.key=$PR_NUMBER -Dsonar.pullrequest.branch=$BRANCH -Dsonar.pullrequest.base=main"
+          fi
+          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: http://localhost:9001
+        with:
+          args: ${{ steps.scan.outputs.args }}
       - name: Print failing quality gate conditions
         if: failure()
         env:
