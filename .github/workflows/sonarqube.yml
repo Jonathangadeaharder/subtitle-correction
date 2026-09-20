@@ -14,6 +14,7 @@ concurrency:
 permissions:
   contents: read
   pull-requests: read
+  checks: write
 
 jobs:
   sonarqube:
@@ -37,6 +38,7 @@ jobs:
           REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
+          set -euo pipefail
           SKIP=false
           if [ "$EVENT_NAME" != "workflow_run" ]; then
             ARGS=""
@@ -100,3 +102,36 @@ jobs:
           curl -sS --max-time 10 -u "$SONAR_TOKEN:" \
             "$BASE/api/qualitygates/project_status?projectKey=VidiomTM_subtitle-correction" \
             | jq '.projectStatus.conditions[] | select(.status=="ERROR")' || true
+      - name: Report result to the PR head
+        # workflow_run check runs attach to the default-branch SHA, so the
+        # PR's required SonarQube check must be created on the PR head SHA.
+        if: ${{ always() && github.event_name == 'workflow_run' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          JOB_STATUS: ${{ job.status }}
+          SKIPPED: ${{ steps.scan.outputs.skip }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ "$SKIPPED" = "true" ]; then
+            CONCLUSION="skipped"
+            SUMMARY="Scan skipped as stale; see the workflow log for the reason."
+          elif [ "$JOB_STATUS" = "success" ]; then
+            CONCLUSION="success"
+            SUMMARY="SonarQube scan completed and passed the quality gate."
+          else
+            CONCLUSION="failure"
+            SUMMARY="SonarQube scan failed or the job errored; see the run log."
+          fi
+          gh api "repos/$REPO/check-runs" --method POST \
+            -f name="SonarQube" \
+            -f head_sha="$HEAD_SHA" \
+            -f status="completed" \
+            -f conclusion="$CONCLUSION" \
+            -f "output[title]=SonarQube" \
+            -f "output[summary]=$SUMMARY" \
+            -f "details_url=https://github.com/$REPO/actions/runs/$RUN_ID" \
+            --jq '.id'
