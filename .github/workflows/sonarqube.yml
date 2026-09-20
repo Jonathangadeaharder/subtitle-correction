@@ -14,11 +14,14 @@ concurrency:
 permissions:
   contents: read
   pull-requests: read
-  checks: write
 
 jobs:
   sonarqube:
     name: SonarQube
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: write
     # Dependabot pull_request runs never receive secrets, so PR scans run
     # via workflow_run (default-branch context, secrets always available).
     # Privileged job with PR-head checkout: never execute the tree here.
@@ -86,6 +89,18 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
+      - name: Pin scanner config to main
+        # PR-supplied sonar-project.properties is untrusted: a PR could
+        # point sonar.sources outside the workspace and upload arbitrary
+        # runner files to the SonarQube server. Always scan with the
+        # reviewed config from main; PR changes take effect after merge.
+        if: success() && steps.scan.conclusion == 'success' && steps.scan.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git cat-file -e "origin/main:sonar-project.properties" 2>/dev/null; then
+            git show "origin/main:sonar-project.properties" > sonar-project.properties
+          fi
       - name: SonarQube Scan
         if: success() && steps.scan.conclusion == 'success' && steps.scan.outputs.skip != 'true'
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
@@ -135,5 +150,37 @@ jobs:
             -f conclusion="$CONCLUSION" \
             -f "output[title]=SonarQube" \
             -f "output[summary]=$SUMMARY" \
+            -f "details_url=https://github.com/$REPO/actions/runs/$RUN_ID" \
+            --jq '.id'
+  fork-notice:
+    name: SonarQube (fork)
+    permissions:
+      checks: write
+    # Fork runs are excluded from the privileged scan job, so they would
+    # never receive a SonarQube check and the required context would leave
+    # the PR stuck on "Expected". Post an explicit skipped check instead.
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name != github.repository
+    runs-on: [self-hosted, macOS, ARM64, VidiomTM]
+    timeout-minutes: 5
+    steps:
+      - name: Report skipped scan to the fork PR head
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/check-runs" --method POST \
+            -f name="SonarQube" \
+            -f head_sha="$HEAD_SHA" \
+            -f status="completed" \
+            -f conclusion="skipped" \
+            -f "output[title]=SonarQube" \
+            -f "output[summary]=Fork pull requests are not analyzed. SonarQube scans require the privileged workflow_run path, which only runs for same-repo PRs." \
             -f "details_url=https://github.com/$REPO/actions/runs/$RUN_ID" \
             --jq '.id'
