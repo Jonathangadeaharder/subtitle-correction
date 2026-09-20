@@ -9,8 +9,9 @@ on:
 
 concurrency:
   # Scope by source repo so identically named branches from different forks
-  # never share a cancellation group.
-  group: sonarqube-${{ github.event.workflow_run.head_repository.full_name || github.repository }}-${{ github.event.workflow_run.head_branch || github.ref }}
+  # never share a cancellation group. ref_name strips refs/heads/ so push
+  # and workflow_run runs of the same branch share one group.
+  group: sonarqube-${{ github.event.workflow_run.head_repository.full_name || github.repository }}-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: true
 
 permissions:
@@ -52,33 +53,33 @@ jobs:
             HEAD_SHA=$(jq -r '.workflow_run.head_sha' "$GITHUB_EVENT_PATH")
             BRANCH=$(jq -r '.workflow_run.head_branch' "$GITHUB_EVENT_PATH")
             # BRANCH is interpolated into a gh --jq filter below, so its
-            # charset must be validated before any use.
+            # charset must be validated before any use. Validation must fail
+            # the job, never skip: a skipped check on a live head passes the gate.
             if ! [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]]; then
-              echo "::warning::Branch name '$BRANCH' contains unsupported characters; refusing to pass it to the scanner. Skipping."
+              echo "::error::Branch name '$BRANCH' contains unsupported characters; refusing to scan. Rename the branch to only [A-Za-z0-9._/-] to unblock the SonarQube gate."
+              exit 1
+            fi
+            PR_NUMBER=$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")
+            if [ -z "$PR_NUMBER" ]; then
+              PR_NUMBER=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+                --jq "[.[] | select(.state == \"open\" and .head.ref == \"$BRANCH\")][0].number // empty")
+            fi
+            if [ -z "$PR_NUMBER" ]; then
+              echo "::warning::No open PR found for branch '$BRANCH'; the scan is stale (PR merged or closed). Skipping."
               SKIP=true
             else
-              PR_NUMBER=$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")
-              if [ -z "$PR_NUMBER" ]; then
-                PR_NUMBER=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
-                  --jq "[.[] | select(.state == \"open\" and .head.ref == \"$BRANCH\")][0].number // empty")
-              fi
-              if [ -z "$PR_NUMBER" ]; then
-                echo "::warning::No open PR found for branch '$BRANCH'; the scan is stale (PR merged or closed). Skipping."
+              PR_JSON=$(gh pr view "$PR_NUMBER" -R "$REPO" \
+                --json headRefOid,baseRefName)
+              PR_SHA=$(jq -r '.headRefOid' <<< "$PR_JSON")
+              BASE=$(jq -r '.baseRefName' <<< "$PR_JSON")
+              if [ "$PR_SHA" != "$HEAD_SHA" ]; then
+                echo "::warning::PR #$PR_NUMBER head $PR_SHA does not match scanned SHA $HEAD_SHA; the scan is stale. Skipping."
                 SKIP=true
+              elif ! [[ "$BASE" =~ ^[A-Za-z0-9._/-]+$ ]] || ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+                echo "::error::Base branch '$BASE' or PR number '$PR_NUMBER' has unsupported characters; refusing to scan."
+                exit 1
               else
-                PR_JSON=$(gh pr view "$PR_NUMBER" -R "$REPO" \
-                  --json headRefOid,baseRefName)
-                PR_SHA=$(jq -r '.headRefOid' <<< "$PR_JSON")
-                BASE=$(jq -r '.baseRefName' <<< "$PR_JSON")
-                if [ "$PR_SHA" != "$HEAD_SHA" ]; then
-                  echo "::warning::PR #$PR_NUMBER head $PR_SHA does not match scanned SHA $HEAD_SHA; the scan is stale. Skipping."
-                  SKIP=true
-                elif ! [[ "$BASE" =~ ^[A-Za-z0-9._/-]+$ ]] || ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
-                  echo "::warning::Base branch '$BASE' or PR number '$PR_NUMBER' has unsupported characters; refusing to pass them to the scanner. Skipping."
-                  SKIP=true
-                else
-                  ARGS="-Dsonar.pullrequest.key=$PR_NUMBER -Dsonar.pullrequest.branch=$BRANCH -Dsonar.pullrequest.base=$BASE"
-                fi
+                ARGS="-Dsonar.pullrequest.key=$PR_NUMBER -Dsonar.pullrequest.branch=$BRANCH -Dsonar.pullrequest.base=$BASE"
               fi
             fi
           fi
@@ -91,16 +92,15 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
           fi
       - uses: actions/checkout@v4
-        if: success() && steps.scan.conclusion == 'success' && steps.scan.outputs.skip != 'true'
+        if: success() && steps.scan.outputs.skip != 'true'
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
       - name: Pin scanner config to main
-        # PR-supplied sonar-project.properties is untrusted: a PR could
-        # point sonar.sources outside the workspace and upload arbitrary
-        # runner files to the SonarQube server. Always scan with the
-        # reviewed config from main; PR changes take effect after merge.
-        if: success() && steps.scan.conclusion == 'success' && steps.scan.outputs.skip != 'true'
+        # PR-supplied sonar-project.properties is untrusted: a PR could point
+        # sonar.sources outside the workspace and upload arbitrary runner
+        # files. Always scan with the reviewed config from main.
+        if: success() && steps.scan.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -111,7 +111,7 @@ jobs:
             exit 1
           fi
       - name: SonarQube Scan
-        if: success() && steps.scan.conclusion == 'success' && steps.scan.outputs.skip != 'true'
+        if: success() && steps.scan.outputs.skip != 'true'
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -131,7 +131,7 @@ jobs:
       - name: Report result to the PR head
         # workflow_run check runs attach to the default-branch SHA, so the
         # PR's required SonarQube check must be created on the PR head SHA.
-        if: ${{ always() && github.event_name == 'workflow_run' }}
+        if: always() && github.event_name == 'workflow_run'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
