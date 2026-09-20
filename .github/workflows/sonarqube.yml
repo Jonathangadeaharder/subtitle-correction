@@ -30,10 +30,6 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64, VidiomTM]
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-          fetch-depth: 0
       - name: Derive scan arguments
         id: scan
         shell: bash
@@ -56,16 +52,27 @@ jobs:
               echo "::warning::No open PR found for branch '$BRANCH'; the scan is stale (PR merged or closed). Skipping."
               echo "skip=true" >> "$GITHUB_OUTPUT"
             else
-              PR_SHA=$(gh pr view "$PR_NUMBER" -R "$REPO" --json headRefOid --jq .headRefOid)
+              PR_JSON=$(gh pr view "$PR_NUMBER" -R "$REPO" \
+                --json headRefOid,baseRefName)
+              PR_SHA=$(jq -r '.headRefOid' <<< "$PR_JSON")
+              BASE=$(jq -r '.baseRefName' <<< "$PR_JSON")
               if [ "$PR_SHA" != "$HEAD_SHA" ]; then
                 echo "::warning::PR #$PR_NUMBER head $PR_SHA does not match scanned SHA $HEAD_SHA; the scan is stale. Skipping."
                 echo "skip=true" >> "$GITHUB_OUTPUT"
+              elif ! [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+                echo "::warning::Branch name '$BRANCH' contains unsupported characters; refusing to pass it to the scanner. Skipping."
+                echo "skip=true" >> "$GITHUB_OUTPUT"
               else
-                ARGS="-Dsonar.pullrequest.key=$PR_NUMBER -Dsonar.pullrequest.branch=$BRANCH -Dsonar.pullrequest.base=main"
+                ARGS="-Dsonar.pullrequest.key=$PR_NUMBER -Dsonar.pullrequest.branch=$BRANCH -Dsonar.pullrequest.base=$BASE"
               fi
             fi
           fi
           echo "args=$ARGS" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.scan.outputs.skip != 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
       - name: SonarQube Scan
         if: steps.scan.outputs.skip != 'true'
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
