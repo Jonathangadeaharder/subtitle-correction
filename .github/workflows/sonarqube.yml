@@ -20,8 +20,7 @@ jobs:
     name: SonarQube
     # Dependabot pull_request runs never receive secrets, so PR scans run
     # via workflow_run (default-branch context, secrets always available).
-    # Fork PRs are excluded: they cannot be attributed from this event,
-    # and the old pull_request-triggered path failed for them (no secrets).
+    # Privileged job with PR-head checkout: never execute the tree here.
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'workflow_run' &&
@@ -38,6 +37,7 @@ jobs:
           REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
+          SKIP=false
           if [ "$EVENT_NAME" != "workflow_run" ]; then
             ARGS=""
           else
@@ -50,7 +50,7 @@ jobs:
             fi
             if [ -z "$PR_NUMBER" ]; then
               echo "::warning::No open PR found for branch '$BRANCH'; the scan is stale (PR merged or closed). Skipping."
-              echo "skip=true" >> "$GITHUB_OUTPUT"
+              SKIP=true
             else
               PR_JSON=$(gh pr view "$PR_NUMBER" -R "$REPO" \
                 --json headRefOid,baseRefName)
@@ -58,16 +58,26 @@ jobs:
               BASE=$(jq -r '.baseRefName' <<< "$PR_JSON")
               if [ "$PR_SHA" != "$HEAD_SHA" ]; then
                 echo "::warning::PR #$PR_NUMBER head $PR_SHA does not match scanned SHA $HEAD_SHA; the scan is stale. Skipping."
-                echo "skip=true" >> "$GITHUB_OUTPUT"
+                SKIP=true
               elif ! [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]]; then
                 echo "::warning::Branch name '$BRANCH' contains unsupported characters; refusing to pass it to the scanner. Skipping."
-                echo "skip=true" >> "$GITHUB_OUTPUT"
+                SKIP=true
+              elif ! [[ "$BASE" =~ ^[A-Za-z0-9._/-]+$ ]] || ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+                echo "::warning::Base branch '$BASE' or PR number '$PR_NUMBER' has unsupported characters; refusing to pass them to the scanner. Skipping."
+                SKIP=true
               else
                 ARGS="-Dsonar.pullrequest.key=$PR_NUMBER -Dsonar.pullrequest.branch=$BRANCH -Dsonar.pullrequest.base=$BASE"
               fi
             fi
           fi
           echo "args=$ARGS" >> "$GITHUB_OUTPUT"
+          if [ "$SKIP" = "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### SonarQube scan skipped"
+              echo "No analysis ran for this event ($EVENT_NAME); see the warnings in the derive step log for the reason."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/checkout@v4
         if: steps.scan.outputs.skip != 'true'
         with:
