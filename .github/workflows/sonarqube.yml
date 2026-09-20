@@ -16,12 +16,12 @@ jobs:
     name: SonarQube
     # Dependabot pull_request runs never receive secrets (GitHub platform
     # behavior), so PR scans run via workflow_run, which executes in the
-    # default-branch context and always has secret access.
+    # default-branch context and always has secret access. Runs on any CI
+    # conclusion so a failed CI cannot silently bypass this required check.
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.event == 'pull_request' &&
-       github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: [self-hosted, macOS, ARM64, VidiomTM]
     steps:
