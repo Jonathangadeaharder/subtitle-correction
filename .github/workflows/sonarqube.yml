@@ -8,10 +8,10 @@ on:
     types: [completed]
 
 concurrency:
-  # Scope by source repo so identically named branches from different forks
-  # never share a cancellation group. ref_name strips refs/heads/ so push
-  # and workflow_run runs of the same branch share one group.
-  group: sonarqube-${{ github.event.workflow_run.head_repository.full_name || github.repository }}-${{ github.event.workflow_run.head_branch || github.ref_name }}
+  # Scope by source repo so identically named fork branches stay separate.
+  # The event_name suffix keeps the direct push scan of main apart from
+  # no-op workflow_run runs fired by push CI completions.
+  group: sonarqube-${{ github.event.workflow_run.head_repository.full_name || github.repository }}-${{ github.event.workflow_run.head_branch || github.ref_name }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
