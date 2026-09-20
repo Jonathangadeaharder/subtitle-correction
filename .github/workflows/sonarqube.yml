@@ -38,6 +38,7 @@ jobs:
           if [ "${{ github.event_name }}" != "workflow_run" ]; then
             ARGS=""
           else
+            HEAD_SHA=$(jq -r '.workflow_run.head_sha' "$GITHUB_EVENT_PATH")
             BRANCH=$(jq -r '.workflow_run.head_branch' "$GITHUB_EVENT_PATH")
             PR_NUMBER=$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")
             if [ -z "$PR_NUMBER" ]; then
@@ -45,13 +46,21 @@ jobs:
                 --json number --jq '.[0].number // empty')
             fi
             if [ -z "$PR_NUMBER" ]; then
-              echo "::error::No open PR found for branch '$BRANCH'; cannot attribute the scan to a pull request."
-              exit 1
+              echo "::warning::No open PR found for branch '$BRANCH'; the scan is stale (PR merged or closed). Skipping."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+            else
+              PR_SHA=$(gh pr view "$PR_NUMBER" -R "$REPO" --json headRefOid --jq .headRefOid)
+              if [ "$PR_SHA" != "$HEAD_SHA" ]; then
+                echo "::warning::PR #$PR_NUMBER head $PR_SHA does not match scanned SHA $HEAD_SHA; the scan is stale. Skipping."
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+              else
+                ARGS="-Dsonar.pullrequest.key=$PR_NUMBER -Dsonar.pullrequest.branch=$BRANCH -Dsonar.pullrequest.base=main"
+              fi
             fi
-            ARGS="-Dsonar.pullrequest.key=$PR_NUMBER -Dsonar.pullrequest.branch=$BRANCH -Dsonar.pullrequest.base=main"
           fi
           echo "args=$ARGS" >> "$GITHUB_OUTPUT"
       - name: SonarQube Scan
+        if: steps.scan.outputs.skip != 'true'
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
