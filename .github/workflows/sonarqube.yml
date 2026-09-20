@@ -8,7 +8,9 @@ on:
     types: [completed]
 
 concurrency:
-  group: sonarqube-${{ github.event.workflow_run.head_branch || github.ref }}
+  # Scope by source repo so identically named branches from different forks
+  # never share a cancellation group.
+  group: sonarqube-${{ github.event.workflow_run.head_repository.full_name || github.repository }}-${{ github.event.workflow_run.head_branch || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -49,30 +51,34 @@ jobs:
           else
             HEAD_SHA=$(jq -r '.workflow_run.head_sha' "$GITHUB_EVENT_PATH")
             BRANCH=$(jq -r '.workflow_run.head_branch' "$GITHUB_EVENT_PATH")
-            PR_NUMBER=$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")
-            if [ -z "$PR_NUMBER" ]; then
-              PR_NUMBER=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
-                --jq "[.[] | select(.state == \"open\" and .head.ref == \"$BRANCH\")][0].number // empty")
-            fi
-            if [ -z "$PR_NUMBER" ]; then
-              echo "::warning::No open PR found for branch '$BRANCH'; the scan is stale (PR merged or closed). Skipping."
+            # BRANCH is interpolated into a gh --jq filter below, so its
+            # charset must be validated before any use.
+            if ! [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+              echo "::warning::Branch name '$BRANCH' contains unsupported characters; refusing to pass it to the scanner. Skipping."
               SKIP=true
             else
-              PR_JSON=$(gh pr view "$PR_NUMBER" -R "$REPO" \
-                --json headRefOid,baseRefName)
-              PR_SHA=$(jq -r '.headRefOid' <<< "$PR_JSON")
-              BASE=$(jq -r '.baseRefName' <<< "$PR_JSON")
-              if [ "$PR_SHA" != "$HEAD_SHA" ]; then
-                echo "::warning::PR #$PR_NUMBER head $PR_SHA does not match scanned SHA $HEAD_SHA; the scan is stale. Skipping."
-                SKIP=true
-              elif ! [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]+$ ]]; then
-                echo "::warning::Branch name '$BRANCH' contains unsupported characters; refusing to pass it to the scanner. Skipping."
-                SKIP=true
-              elif ! [[ "$BASE" =~ ^[A-Za-z0-9._/-]+$ ]] || ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
-                echo "::warning::Base branch '$BASE' or PR number '$PR_NUMBER' has unsupported characters; refusing to pass them to the scanner. Skipping."
+              PR_NUMBER=$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")
+              if [ -z "$PR_NUMBER" ]; then
+                PR_NUMBER=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+                  --jq "[.[] | select(.state == \"open\" and .head.ref == \"$BRANCH\")][0].number // empty")
+              fi
+              if [ -z "$PR_NUMBER" ]; then
+                echo "::warning::No open PR found for branch '$BRANCH'; the scan is stale (PR merged or closed). Skipping."
                 SKIP=true
               else
-                ARGS="-Dsonar.pullrequest.key=$PR_NUMBER -Dsonar.pullrequest.branch=$BRANCH -Dsonar.pullrequest.base=$BASE"
+                PR_JSON=$(gh pr view "$PR_NUMBER" -R "$REPO" \
+                  --json headRefOid,baseRefName)
+                PR_SHA=$(jq -r '.headRefOid' <<< "$PR_JSON")
+                BASE=$(jq -r '.baseRefName' <<< "$PR_JSON")
+                if [ "$PR_SHA" != "$HEAD_SHA" ]; then
+                  echo "::warning::PR #$PR_NUMBER head $PR_SHA does not match scanned SHA $HEAD_SHA; the scan is stale. Skipping."
+                  SKIP=true
+                elif ! [[ "$BASE" =~ ^[A-Za-z0-9._/-]+$ ]] || ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+                  echo "::warning::Base branch '$BASE' or PR number '$PR_NUMBER' has unsupported characters; refusing to pass them to the scanner. Skipping."
+                  SKIP=true
+                else
+                  ARGS="-Dsonar.pullrequest.key=$PR_NUMBER -Dsonar.pullrequest.branch=$BRANCH -Dsonar.pullrequest.base=$BASE"
+                fi
               fi
             fi
           fi
@@ -98,8 +104,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git cat-file -e "origin/main:sonar-project.properties" 2>/dev/null; then
+          if git cat-file -e "origin/main:sonar-project.properties"; then
             git show "origin/main:sonar-project.properties" > sonar-project.properties
+          else
+            echo "::error::sonar-project.properties is missing from origin/main; refusing to fall back to the untrusted PR-supplied config."
+            exit 1
           fi
       - name: SonarQube Scan
         if: success() && steps.scan.conclusion == 'success' && steps.scan.outputs.skip != 'true'
@@ -139,6 +148,9 @@ jobs:
           elif [ "$JOB_STATUS" = "success" ]; then
             CONCLUSION="success"
             SUMMARY="SonarQube scan completed and passed the quality gate."
+          elif [ "$JOB_STATUS" = "cancelled" ]; then
+            CONCLUSION="cancelled"
+            SUMMARY="SonarQube run was cancelled, typically because a newer run superseded it."
           else
             CONCLUSION="failure"
             SUMMARY="SonarQube scan failed or the job errored; see the run log."
