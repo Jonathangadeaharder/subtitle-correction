@@ -12,7 +12,7 @@ permissions:
 concurrency:
   # Rapid pushes or PR updates cancel the superseded CI run instead of
   # queueing redundant full runs on the self-hosted runner.
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -35,3 +35,4 @@ jobs:
           name: coverage
           path: coverage.xml
           if-no-files-found: error
+          retention-days: 1

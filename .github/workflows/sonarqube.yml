@@ -65,23 +65,6 @@ jobs:
             echo "::error::Triggering CI run concluded '$CI_CONCLUSION'; the scan only runs on a green CI. Fix CI and push to re-run."
             exit 1
           fi
-          # A skip may only be posted when the scanned SHA is provably dead:
-          # no open PR may still point at it, else a skipped conclusion
-          # would satisfy the required context on a live head.
-          skip_only_if_dead() {
-            # Association matches every commit pushed to a PR branch, not
-            # only the head: count only open PRs whose current head IS the
-            # scanned SHA, so stale heads still reach the skip.
-            OPEN_PRS=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
-              --jq '.[] | "\(.state)\t\(.head.sha)"' \
-              | awk -F'\t' -v s="$HEAD_SHA" \
-              '$1 == "open" && $2 == s {n++} END {print n+0}')
-            if [ "$OPEN_PRS" != "0" ]; then
-              echo "::error::Scanned SHA $HEAD_SHA is still the head of an open PR; refusing to post a skipped check on a live head."
-              exit 1
-            fi
-            SKIP=true
-          }
           load_pr() {
             PR_JSON=$(gh pr view "$1" -R "$REPO" --json headRefOid,baseRefName,state)
             PR_SHA=$(jq -r '.headRefOid' <<< "$PR_JSON")
@@ -91,8 +74,9 @@ jobs:
           if [ "$EVENT_KIND" = "pull_request" ]; then
             BRANCH=$(jq -r '.workflow_run.head_branch' "$GITHUB_EVENT_PATH")
             # BRANCH is interpolated into gh filters below, so its charset
-            # must be validated before any use. Validation must fail the
-            # job, never skip: a skipped check on a live head passes the gate.
+            # must be validated before any use. Validation failures fail
+            # the job: the author gets a loud, actionable error instead of
+            # a silently dropped event.
             if ! [[ "$BRANCH" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
               echo "::error::Branch name '$BRANCH' contains unsupported characters; refusing to scan. Rename the branch to [A-Za-z0-9._/-] only, starting with an alphanumeric, to unblock the SonarQube gate."
               exit 1
@@ -105,13 +89,13 @@ jobs:
                 --jq '.[] | "\(.number)\t\(.state)\t\(.head.ref)"')
               PR_NUMBER=$(awk -F'\t' -v b="$BRANCH" '$2 == "open" && $3 == b {print $1; exit}' <<< "$PR_ROWS")
               if [ -z "$PR_NUMBER" ] && [ -z "$PR_ROWS" ]; then
-                echo "::error::No pull requests found for scanned SHA $HEAD_SHA; refusing to post a skipped check on a possibly live PR head."
+                echo "::error::No pull requests found for scanned SHA $HEAD_SHA; this may be a live head whose association has not propagated yet. Re-run this workflow or push again."
                 exit 1
               fi
             fi
             if [ -z "$PR_NUMBER" ]; then
               echo "::warning::No open PR found for branch '$BRANCH'; the scan is stale (PR merged or closed)."
-              skip_only_if_dead
+              SKIP=true
             elif ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
               echo "::error::PR number '$PR_NUMBER' is not a plain integer; refusing to scan."
               exit 1
@@ -132,10 +116,10 @@ jobs:
               fi
               if [ "$PR_SHA" != "$HEAD_SHA" ]; then
                 echo "::warning::PR #$PR_NUMBER head $PR_SHA does not match scanned SHA $HEAD_SHA; the scan is stale."
-                skip_only_if_dead
+                SKIP=true
               elif [ "$PR_STATE" != "OPEN" ]; then
                 echo "::warning::PR #$PR_NUMBER is $PR_STATE; the scan is stale."
-                skip_only_if_dead
+                SKIP=true
               elif ! [[ "$BASE" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
                 echo "::error::Base branch '$BASE' contains unsupported characters; refusing to scan."
                 exit 1
@@ -152,7 +136,7 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             {
               echo "### SonarQube scan skipped"
-              echo "No analysis ran for this event ($EVENT_KIND); see the warnings in the derive step log for the reason."
+              echo "No analysis ran and no check was posted for this event ($EVENT_KIND); the required context stays on 'Expected'. See the warnings in the derive step log for the reason."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -214,7 +198,13 @@ jobs:
         run: |
           BASE="http://localhost:9001"
           # Single source of truth for the key is the pinned properties file.
-          PROJECT_KEY=$(sed -n 's/^sonar.projectKey=//p' sonar-project.properties)
+          # This step also runs on pre-pin failures: guard instead of
+          # querying with an empty key.
+          PROJECT_KEY=$(sed -n 's/^sonar.projectKey=//p' sonar-project.properties 2>/dev/null || true)
+          if [ -z "$PROJECT_KEY" ]; then
+            echo "::warning::No pinned sonar-project.properties in this run; cannot print quality-gate conditions."
+            exit 0
+          fi
           curl -sS --max-time 10 -u "$SONAR_TOKEN:" \
             "$BASE/api/qualitygates/project_status?projectKey=$PROJECT_KEY" \
             | jq '.projectStatus.conditions[] | select(.status=="ERROR")' || true
@@ -248,9 +238,13 @@ jobs:
             done
           }
           if [ "$SKIPPED" = "true" ]; then
-            CONCLUSION="skipped"
-            SUMMARY="Scan skipped as stale; see the workflow log for the reason."
-          elif [ -n "${CI_CONCLUSION:-}" ] && [ "$CI_CONCLUSION" != "success" ]; then
+            # A stale scan posts nothing: a "skipped" conclusion satisfies
+            # required checks, so posting one could let a close-and-reopen
+            # race pass the gate. "Expected" blocks the merge safely.
+            echo "Stale scan; no check posted. The required SonarQube context stays on 'Expected' until the branch becomes live again."
+            exit 0
+          fi
+          if [ -n "${CI_CONCLUSION:-}" ] && [ "$CI_CONCLUSION" != "success" ]; then
             CONCLUSION="failure"
             SUMMARY="Triggering CI run concluded '$CI_CONCLUSION'; SonarQube did not scan. Fix CI and push."
           elif [ "$JOB_STATUS" = "success" ]; then
