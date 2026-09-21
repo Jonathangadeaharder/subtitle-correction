@@ -84,6 +84,16 @@ def test_resolve_step_paces_and_counts_its_writes() -> None:
         "the comments fetch must retry too: a throttled read of previous "
         "comments otherwise resolves nothing for the whole round"
     )
+    assert "GITHUB_STEP_SUMMARY" in run, (
+        "a failed fetch must be recorded somewhere durable (step summary), "
+        "not just a warning line in a green step log: stale comments "
+        "accumulate invisibly across repeated failures"
+    )
+    assert "top-level" in run, (
+        "the in_reply_to_id filter narrows resolution to top-level "
+        "comments; a comment in the YAML must say so, or a future edit "
+        "reads it as an oversight"
+    )
     assert re.search(r"replied=\$", run) and re.search(r"minimized=\$", run), (
         "the resolve step must count and surface replied/minimized/failed "
         "in its step output, not run silently"
@@ -142,6 +152,15 @@ def test_backoff_script_retries_only_transient_failures() -> None:
         "the transient check must recognise the secondary rate limit that "
         "caused issue #15"
     )
+    assert re.search(r"connection reset", text, re.IGNORECASE), (
+        "the transient check must also survive network-level failures "
+        "(connection reset, timeout, DNS): gh reports those differently "
+        "from HTTP rate limits"
+    )
+    assert "trap" in text, (
+        "the read helper must clean up its temp file even when the retry "
+        "loop is interrupted"
+    )
     assert "GH_RETRY_MAX_ATTEMPTS" in text, (
         "the retry budget must be a named, overridable knob"
     )
@@ -173,6 +192,9 @@ def _fake_gh(tmp: str, behavior: str) -> None:
         f'case "{behavior}" in\n'
         "  transient_once)\n"
         '    [ "$n" -gt 1 ] && echo \'{"ok": true}\' && exit 0\n'
+        '    echo "gh: HTTP 403: secondary rate limit exceeded, retry after 30s" >&2\n'
+        "    exit 1;;\n"
+        "  always_transient)\n"
         '    echo "gh: HTTP 403: secondary rate limit exceeded, retry after 30s" >&2\n'
         "    exit 1;;\n"
         "  permanent)\n"
@@ -243,4 +265,36 @@ def test_backoff_read_helper_returns_stdout_after_retry() -> None:
         assert "DATA:{\"ok\": true}" in result.stdout, (
             "the read helper must print the payload to stdout for the "
             "caller's command substitution to capture"
+        )
+
+
+def test_backoff_helper_gives_up_after_max_attempts() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        _fake_gh(tmp, "always_transient")
+        result = _run_helper(
+            tmp,
+            "export GH_RETRY_MAX_ATTEMPTS=2\n"
+            "gh_with_backoff gh api repos/o/r/pulls/1/comments",
+        )
+        calls = (Path(tmp) / "calls").read_text().strip()
+        assert result.returncode != 0
+        assert calls == "2", (
+            "an always-transient failure must stop at GH_RETRY_MAX_ATTEMPTS"
+        )
+        assert "HTTP 403" in result.stderr, (
+            "giving up must still surface the last gh stderr"
+        )
+
+
+def test_every_backoff_call_site_passes_the_full_command() -> None:
+    # Run 35556097175: one call site passed the bare endpoint, the helper
+    # executed it as a command (exit 127), and the resolve step skipped
+    # resolving every previous round's comments.
+    for name in (RESOLVE_STEP, POST_STEP):
+        run = step_run_text(name)
+        first_words = re.findall(r"gh_(?:read_)?with_backoff\s+(\S+)", run)
+        assert first_words, f"{name} must use the retry helpers"
+        assert first_words == ["gh"] * len(first_words), (
+            f"{name}: retry-helper call sites must pass the full command "
+            f"('gh api <endpoint> ...'), got {first_words}"
         )

@@ -4,10 +4,11 @@
 # command (gh api ...) as their arguments and run it as given.
 GH_RETRY_MAX_ATTEMPTS="${GH_RETRY_MAX_ATTEMPTS:-6}"
 
-# Retry only failures that look transient (rate limits, 5xx); permanent
-# client errors fail fast with their stderr instead of burning sleeps.
+# Retry only failures that look transient (rate limits, 5xx, network
+# errors); permanent client errors fail fast with their stderr instead
+# of burning sleeps.
 transient_gh_failure() {
-  grep -qiE 'rate limit|retry after|HTTP 5[0-9][0-9]'
+  grep -qiE 'rate limit|retry after|HTTP 5[0-9][0-9]|connection reset|timed? out|EOF|dial tcp|no such host|deadline exceeded'
 }
 
 # A retried create can duplicate its output when the first attempt
@@ -33,17 +34,16 @@ gh_with_backoff() {
 # holds stderr for the retry decision without a second API call.
 gh_read_with_backoff() {
   local attempt=1 out err_file
-  err_file=$(mktemp)
+  err_file=$(mktemp) || return 1
+  trap 'rm -f "$err_file"' RETURN
   while :; do
     if out=$("$@" 2>"$err_file"); then
-      rm -f "$err_file"
       printf '%s' "$out"
       return 0
     fi
     if ! transient_gh_failure < "$err_file" ||
       [ "$attempt" -ge "$GH_RETRY_MAX_ATTEMPTS" ]; then
       cat "$err_file" >&2
-      rm -f "$err_file"
       return 1
     fi
     sleep $((2 ** attempt))
