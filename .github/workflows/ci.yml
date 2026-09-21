@@ -10,10 +10,13 @@ permissions:
   contents: read
 
 concurrency:
-  # Rapid pushes or PR updates cancel the superseded CI run instead of
-  # queueing redundant full runs on the self-hosted runner.
+  # Rapid PR updates cancel the superseded CI run instead of queueing
+  # redundant full runs on the self-hosted runner. Push runs to main are
+  # never cancelled: the SonarQube workflow_run fires on 'cancelled' too
+  # and fails the scan by design, so a cancelled main run would leave the
+  # earlier commit unanalyzed in a rapid-push window.
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:

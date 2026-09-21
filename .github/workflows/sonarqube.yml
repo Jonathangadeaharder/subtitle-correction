@@ -11,8 +11,10 @@ on:
 concurrency:
   # Keyed by head SHA: a run for a superseded SHA can never cancel the
   # current head's in-flight scan; only same-SHA reruns cancel each other.
-  # The repository scope keeps identically named fork branches separate.
-  group: sonarqube-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_sha }}
+  # The repository scope keeps identically named fork branches separate,
+  # and the event kind keeps a PR-event and push-event scan of the same
+  # SHA (fast-forward merges) from cancelling each other.
+  group: sonarqube-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.event }}-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: true
 
 permissions:
@@ -89,7 +91,7 @@ jobs:
                 --jq '.[] | "\(.number)\t\(.state)\t\(.head.ref)"')
               PR_NUMBER=$(awk -F'\t' -v b="$BRANCH" '$2 == "open" && $3 == b {print $1; exit}' <<< "$PR_ROWS")
               if [ -z "$PR_NUMBER" ] && [ -z "$PR_ROWS" ]; then
-                echo "::error::No pull requests found for scanned SHA $HEAD_SHA; this may be a live head whose association has not propagated yet. Re-run this workflow or push again."
+                echo "::error::No pull requests found for scanned SHA $HEAD_SHA; this may be a live head whose association has not propagated yet. Push again: re-running this workflow later than one day fails anyway, the coverage artifact from the triggering CI run expires after retention-days: 1."
                 exit 1
               fi
             fi
