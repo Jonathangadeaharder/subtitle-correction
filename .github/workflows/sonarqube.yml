@@ -39,7 +39,6 @@ jobs:
     # via workflow_run (default-branch context, secrets always available).
     # Privileged job with PR-head checkout: never execute the tree here.
     if: >-
-      github.event_name == 'workflow_run' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
       (github.event.workflow_run.event == 'pull_request' ||
        github.event.workflow_run.event == 'push')
@@ -156,7 +155,7 @@ jobs:
               echo "No analysis ran for this event ($EVENT_KIND); see the warnings in the derive step log for the reason."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         # The checked-out tree is untrusted PR code: never leave the
         # GITHUB_TOKEN persisted in its .git/config.
         if: success() && steps.scan.outputs.skip != 'true'
@@ -236,6 +235,18 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
+          # Bounded retry: a transient POST failure would leave the
+          # required check on "Expected" with no signal on the PR itself.
+          post_with_retry() {
+            local i
+            for i in 1 2 3; do
+              if gh api "$@"; then
+                return 0
+              fi
+              [ "$i" = 3 ] && return 1
+              sleep $((i * 5))
+            done
+          }
           if [ "$SKIPPED" = "true" ]; then
             CONCLUSION="skipped"
             SUMMARY="Scan skipped as stale; see the workflow log for the reason."
@@ -255,7 +266,7 @@ jobs:
             CONCLUSION="failure"
             SUMMARY="SonarQube scan failed or the job errored; see the run log."
           fi
-          gh api "repos/$REPO/check-runs" --method POST \
+          post_with_retry "repos/$REPO/check-runs" --method POST \
             -f name="$CHECK_NAME" \
             -f head_sha="$HEAD_SHA" \
             -f status="completed" \
@@ -272,7 +283,6 @@ jobs:
     # would stay on "Expected". action_required keeps the gate honest:
     # "skipped" satisfies required checks and lets fork PRs bypass review.
     if: >-
-      github.event_name == 'workflow_run' &&
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.head_repository.full_name != github.repository
     runs-on: [self-hosted, macOS, ARM64, VidiomTM]
@@ -287,7 +297,19 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          gh api "repos/$REPO/check-runs" --method POST \
+          # Bounded retry: a transient POST failure would leave the fork
+          # PR's required check on "Expected" with no signal at all.
+          post_with_retry() {
+            local i
+            for i in 1 2 3; do
+              if gh api "$@"; then
+                return 0
+              fi
+              [ "$i" = 3 ] && return 1
+              sleep $((i * 5))
+            done
+          }
+          post_with_retry "repos/$REPO/check-runs" --method POST \
             -f name="$CHECK_NAME" \
             -f head_sha="$HEAD_SHA" \
             -f status="completed" \
