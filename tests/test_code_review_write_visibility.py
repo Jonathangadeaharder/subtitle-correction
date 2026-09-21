@@ -13,6 +13,8 @@ the failure modes the fix must keep closed:
 """
 
 import re
+import subprocess
+import tempfile
 
 import yaml
 from pathlib import Path
@@ -148,3 +150,97 @@ def test_backoff_script_retries_only_transient_failures() -> None:
         "can duplicate its output (visible duplicate beats invisible "
         "findings)"
     )
+
+
+def _fake_gh(tmp: str, behavior: str) -> None:
+    # A fake gh that counts invocations and fails per `behavior`:
+    # "transient_once" fails with a rate-limit message on call 1 then
+    # succeeds; "permanent" always fails with a 422.
+    calls_file = f"{tmp}/calls"
+    gh = Path(tmp) / "gh"
+    gh.write_text(
+        "#!/bin/sh\n"
+        f'CALLS_FILE="{calls_file}"\n'
+        'n=$(cat "$CALLS_FILE" 2>/dev/null || echo 0)\n'
+        'n=$((n + 1)); echo "$n" > "$CALLS_FILE"\n'
+        # Argue like the real gh api: one endpoint positional, then flags.
+        'shift 2\n'
+        'for a in "$@"; do\n'
+        '  case "$a" in -*) ;; *)\n'
+        '    echo "accepts 1 arg(s), received more" >&2; exit 1;;\n'
+        "  esac\n"
+        "done\n"
+        f'case "{behavior}" in\n'
+        "  transient_once)\n"
+        '    [ "$n" -gt 1 ] && echo \'{"ok": true}\' && exit 0\n'
+        '    echo "gh: HTTP 403: secondary rate limit exceeded, retry after 30s" >&2\n'
+        "    exit 1;;\n"
+        "  permanent)\n"
+        '    echo "gh: HTTP 422: Validation Failed" >&2\n'
+        "    exit 1;;\n"
+        "esac\n"
+    )
+    gh.chmod(0o755)
+
+
+def _run_helper(tmp: str, call: str) -> subprocess.CompletedProcess:
+    script = (
+        f'export PATH="{tmp}:$PATH"\n'
+        f'. "{REPO_ROOT / "scripts" / "gh-with-backoff.sh"}"\n'
+        f"{call}\n"
+    )
+    return subprocess.run(
+        ["bash", "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def test_backoff_helper_retries_transient_failures() -> None:
+    # The helper receives the full command (gh api ...) and must execute
+    # it as-is. Run 35555738571 failed because the helper re-prefixed
+    # "gh api" onto an argument list that already contained it.
+    with tempfile.TemporaryDirectory() as tmp:
+        _fake_gh(tmp, "transient_once")
+        result = _run_helper(
+            tmp, "gh_with_backoff gh api repos/o/r/pulls/1/comments || exit 1"
+        )
+        calls = (Path(tmp) / "calls").read_text().strip()
+        assert result.returncode == 0, result.stderr
+        assert calls == "2", (
+            "a transient rate-limit failure must be retried, not failed fast"
+        )
+
+
+def test_backoff_helper_fails_fast_on_permanent_errors() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        _fake_gh(tmp, "permanent")
+        result = _run_helper(
+            tmp, "gh_with_backoff gh api repos/o/r/pulls/1/comments"
+        )
+        calls = (Path(tmp) / "calls").read_text().strip()
+        assert result.returncode != 0
+        assert calls == "1", (
+            "a permanent client error (422) must not burn retry sleeps"
+        )
+        assert "HTTP 422" in result.stderr, (
+            "the helper must surface the underlying gh stderr, not swallow it"
+        )
+
+
+def test_backoff_read_helper_returns_stdout_after_retry() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        _fake_gh(tmp, "transient_once")
+        result = _run_helper(
+            tmp,
+            "COMMENTS=$(gh_read_with_backoff gh api repos/o/r/pulls/1/comments)"
+            ' || exit 1; echo "DATA:$COMMENTS"\nexit 0',
+        )
+        calls = (Path(tmp) / "calls").read_text().strip()
+        assert result.returncode == 0, result.stderr
+        assert calls == "2"
+        assert "DATA:{\"ok\": true}" in result.stdout, (
+            "the read helper must print the payload to stdout for the "
+            "caller's command substitution to capture"
+        )

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Shared gh api retry policy for the code-review workflow steps.
-# Source this file; do not execute it.
+# Source this file; do not execute it. Both helpers take the full
+# command (gh api ...) as their arguments and run it as given.
 GH_RETRY_MAX_ATTEMPTS="${GH_RETRY_MAX_ATTEMPTS:-6}"
 
 # Retry only failures that look transient (rate limits, 5xx); permanent
@@ -15,7 +16,7 @@ transient_gh_failure() {
 gh_with_backoff() {
   local attempt=1 err
   while :; do
-    if err=$(gh api "$@" 2>&1 >/dev/null); then
+    if err=$("$@" 2>&1 >/dev/null); then
       return 0
     fi
     if ! printf '%s' "$err" | transient_gh_failure ||
@@ -34,7 +35,7 @@ gh_read_with_backoff() {
   local attempt=1 out err_file
   err_file=$(mktemp)
   while :; do
-    if out=$(gh api "$@" 2>"$err_file"); then
+    if out=$("$@" 2>"$err_file"); then
       rm -f "$err_file"
       printf '%s' "$out"
       return 0
