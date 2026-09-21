@@ -27,11 +27,11 @@ jobs:
       - run: uv run ruff check .
       - run: uv run pytest --cov-report=xml
       - run: uv run python -m compileall subtitle_correction
-      # Coverage artifact consumed by the SonarQube workflow_run scan,
-      # which must never run tests in its privileged job. Only green runs
-      # upload: red or cancelled CI runs never reach a scan.
+      # Consumed by the SonarQube workflow_run scan, which never runs
+      # tests. Only green runs upload; a green run missing coverage.xml
+      # fails here at the point of origin, not as a scan-side download error.
       - uses: actions/upload-artifact@v4
         with:
           name: coverage
           path: coverage.xml
-          if-no-files-found: warn
+          if-no-files-found: error

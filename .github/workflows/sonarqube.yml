@@ -70,13 +70,24 @@ jobs:
           # no open PR may still point at it, else a skipped conclusion
           # would satisfy the required context on a live head.
           skip_only_if_dead() {
+            # Association matches every commit pushed to a PR branch, not
+            # only the head: count only open PRs whose current head IS the
+            # scanned SHA, so stale heads still reach the skip.
             OPEN_PRS=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
-              --jq '[.[] | select(.state == "open")] | length')
+              --jq '.[] | "\(.state)\t\(.head.sha)"' \
+              | awk -F'\t' -v s="$HEAD_SHA" \
+              '$1 == "open" && $2 == s {n++} END {print n+0}')
             if [ "$OPEN_PRS" != "0" ]; then
               echo "::error::Scanned SHA $HEAD_SHA is still the head of an open PR; refusing to post a skipped check on a live head."
               exit 1
             fi
             SKIP=true
+          }
+          load_pr() {
+            PR_JSON=$(gh pr view "$1" -R "$REPO" --json headRefOid,baseRefName,state)
+            PR_SHA=$(jq -r '.headRefOid' <<< "$PR_JSON")
+            BASE=$(jq -r '.baseRefName' <<< "$PR_JSON")
+            PR_STATE=$(jq -r '.state' <<< "$PR_JSON")
           }
           if [ "$EVENT_KIND" = "pull_request" ]; then
             BRANCH=$(jq -r '.workflow_run.head_branch' "$GITHUB_EVENT_PATH")
@@ -106,11 +117,20 @@ jobs:
               echo "::error::PR number '$PR_NUMBER' is not a plain integer; refusing to scan."
               exit 1
             else
-              PR_JSON=$(gh pr view "$PR_NUMBER" -R "$REPO" \
-                --json headRefOid,baseRefName,state)
-              PR_SHA=$(jq -r '.headRefOid' <<< "$PR_JSON")
-              BASE=$(jq -r '.baseRefName' <<< "$PR_JSON")
-              PR_STATE=$(jq -r '.state' <<< "$PR_JSON")
+              load_pr "$PR_NUMBER"
+              if [ "$PR_SHA" != "$HEAD_SHA" ] || [ "$PR_STATE" != "OPEN" ]; then
+                # payload [0] can pick another PR sharing the SHA (order
+                # is unspecified, entries carry no state): re-resolve from
+                # the branch-based rows before treating the scan as stale.
+                ALT_PR=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+                  --jq '.[] | "\(.number)\t\(.state)\t\(.head.ref)"' \
+                  | awk -F'\t' -v b="$BRANCH" \
+                  '$2 == "open" && $3 == b {print $1; exit}')
+                if [ -n "$ALT_PR" ] && [ "$ALT_PR" != "$PR_NUMBER" ]; then
+                  PR_NUMBER="$ALT_PR"
+                  load_pr "$PR_NUMBER"
+                fi
+              fi
               if [ "$PR_SHA" != "$HEAD_SHA" ]; then
                 echo "::warning::PR #$PR_NUMBER head $PR_SHA does not match scanned SHA $HEAD_SHA; the scan is stale."
                 skip_only_if_dead
@@ -194,8 +214,10 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           BASE="http://localhost:9001"
+          # Single source of truth for the key is the pinned properties file.
+          PROJECT_KEY=$(sed -n 's/^sonar.projectKey=//p' sonar-project.properties)
           curl -sS --max-time 10 -u "$SONAR_TOKEN:" \
-            "$BASE/api/qualitygates/project_status?projectKey=VidiomTM_subtitle-correction" \
+            "$BASE/api/qualitygates/project_status?projectKey=$PROJECT_KEY" \
             | jq '.projectStatus.conditions[] | select(.status=="ERROR")' || true
       - name: Report result to the PR head
         # workflow_run check runs attach to the default-branch SHA, so the
@@ -224,6 +246,9 @@ jobs:
             CONCLUSION="success"
             SUMMARY="SonarQube scan completed and passed the quality gate."
           elif [ "$JOB_STATUS" = "cancelled" ]; then
+            # A concurrency-cancelled run posts this 'cancelled' check; the
+            # superseding run owns the final conclusion. Chained cancels
+            # leave this transient check until some run for the SHA ends.
             CONCLUSION="cancelled"
             SUMMARY="SonarQube run was cancelled, typically because a newer run superseded it."
           else
