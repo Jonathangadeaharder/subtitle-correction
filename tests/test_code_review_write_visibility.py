@@ -200,6 +200,15 @@ def _fake_gh(tmp: str, behavior: str) -> None:
         "  permanent)\n"
         '    echo "gh: HTTP 422: Validation Failed" >&2\n'
         "    exit 1;;\n"
+        "  too_many_requests_once)\n"
+        '    [ "$n" -gt 1 ] && echo \'{"ok": true}\' && exit 0\n'
+        '    echo "gh: HTTP 429: Too Many Requests" >&2\n'
+        "    exit 1;;\n"
+        "  timeout_headers_once)\n"
+        '    [ "$n" -gt 1 ] && echo \'{"ok": true}\' && exit 0\n'
+        '    echo "Get https://api.github.com/repos/o/r: net/http: '
+        'timeout awaiting response headers" >&2\n'
+        "    exit 1;;\n"
         "esac\n"
     )
     gh.chmod(0o755)
@@ -298,3 +307,70 @@ def test_every_backoff_call_site_passes_the_full_command() -> None:
             f"{name}: retry-helper call sites must pass the full command "
             f"('gh api <endpoint> ...'), got {first_words}"
         )
+
+
+def test_backoff_retries_a_bare_429_body() -> None:
+    # Advisory from PR #21: the matcher knew "rate limit" and "retry after"
+    # but a bare "HTTP 429: Too Many Requests" body failed fast instead of
+    # retrying, which is the same secondary-limit class as issue #15.
+    with tempfile.TemporaryDirectory() as tmp:
+        _fake_gh(tmp, "too_many_requests_once")
+        result = _run_helper(
+            tmp, "gh_with_backoff gh api repos/o/r/pulls/1/comments || exit 1"
+        )
+        calls = (Path(tmp) / "calls").read_text().strip()
+        assert result.returncode == 0, result.stderr
+        assert calls == "2", "a 429 body must be retried"
+
+
+def test_backoff_retries_net_http_timeout_headers() -> None:
+    # Advisory from PR #21: "timed? out" matched "time out"/"timed out"
+    # but not Go's "net/http: timeout awaiting response headers".
+    with tempfile.TemporaryDirectory() as tmp:
+        _fake_gh(tmp, "timeout_headers_once")
+        result = _run_helper(
+            tmp,
+            "COMMENTS=$(gh_read_with_backoff gh api repos/o/r/pulls/1/comments)"
+            " || exit 1; echo \"DATA:$COMMENTS\"\nexit 0",
+        )
+        calls = (Path(tmp) / "calls").read_text().strip()
+        assert result.returncode == 0, result.stderr
+        assert calls == "2", "an i/o-level timeout must be retried"
+
+
+def test_read_helper_does_not_leak_its_return_trap() -> None:
+    # Advisory from PR #21: the RETURN trap set inside gh_read_with_backoff
+    # persisted in the sourcing shell, firing a no-op `rm -f ""` on every
+    # later function return in that shell.
+    with tempfile.TemporaryDirectory() as tmp:
+        _fake_gh(tmp, "transient_once")
+        result = _run_helper(
+            tmp,
+            "COMMENTS=$(gh_read_with_backoff gh api repos/o/r/pulls/1/comments)"
+            ' || exit 1\n'
+            'remaining=$(trap -p RETURN)\n'
+            'echo "TRAP:[$remaining]"\n'
+            "exit 0",
+        )
+        assert result.returncode == 0, result.stderr
+        assert "TRAP:[]" in result.stdout, (
+            "the read helper must restore the previous RETURN trap"
+        )
+
+
+def test_non_numeric_retry_budget_is_normalised() -> None:
+    # Advisory from PR #21: a non-numeric GH_RETRY_MAX_ATTEMPTS makes the
+    # integer comparison error out, so the loop is bounded only by the job
+    # timeout. The default must be restored instead.
+    script = (
+        "export GH_RETRY_MAX_ATTEMPTS=abc\n"
+        f'. "{REPO_ROOT / "scripts" / "gh-with-backoff.sh"}"\n'
+        'echo "BUDGET:$GH_RETRY_MAX_ATTEMPTS"\n'
+        "exit 0\n"
+    )
+    result = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, timeout=30
+    )
+    assert "BUDGET:6" in result.stdout, (
+        f"a non-numeric budget must fall back to 6, got {result.stdout!r}"
+    )
