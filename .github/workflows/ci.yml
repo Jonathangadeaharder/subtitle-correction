@@ -18,5 +18,13 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --extra dev --frozen
       - run: uv run ruff check .
-      - run: uv run pytest
+      - run: uv run pytest --cov-report=xml
       - run: uv run python -m compileall subtitle_correction
+      # Coverage artifact consumed by the SonarQube workflow_run scan,
+      # which must never run tests in its privileged job.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: error
