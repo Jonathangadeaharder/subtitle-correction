@@ -33,25 +33,40 @@ jobs:
           set +e
           COMMENTS_JSON=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments" \
             --paginate \
-            --jq '.[] | select(.user.login == "github-actions[bot]") | "\(.id)\t\(.node_id)"' 2>/dev/null)
+            --jq '.[] | select(.user.login == "github-actions[bot]") | "\(.id)\t\(.node_id)"')
+          if [ $? -ne 0 ]; then
+            echo "::warning::Could not fetch previous review comments; continuing without resolving."
+            exit 0
+          fi
           if [ -z "$COMMENTS_JSON" ]; then
             echo "No previous comments to resolve."
             exit 0
           fi
+          REPLIED=0
+          MINIMIZED=0
+          FAILED=0
           while IFS=$'\t' read -r id node_id; do
             [ -z "$id" ] && continue
-            gh api "repos/${REPO}/pulls/comments/${id}/replies" \
+            # Paced writes: an unthrottled ~110-write burst here tripped a
+            # secondary rate limit that killed every later POST (issue #15).
+            sleep 1
+            if gh api "repos/${REPO}/pulls/comments/${id}/replies" \
               --method POST \
               -f body="Resolved — superseded by a newer review run." \
-              > /dev/null 2>&1 || true
-            gh api graphql -f query="
-              mutation {
-                minimizeComment(input: {subjectId: \"${node_id}\"}) {
-                  minimizedComment { isMinimized minimizedReason }
-                }
-              }" > /dev/null 2>&1 || true
+              > /dev/null; then
+              REPLIED=$((REPLIED + 1))
+            else
+              FAILED=$((FAILED + 1))
+              echo "::warning::Reply to comment ${id} failed."
+            fi
+            if gh api graphql -f query="mutation { minimizeComment(input: {subjectId: \"${node_id}\"}) { minimizedComment { isMinimized minimizedReason } } }" > /dev/null; then
+              MINIMIZED=$((MINIMIZED + 1))
+            else
+              FAILED=$((FAILED + 1))
+              echo "::warning::Minimize of comment ${id} failed."
+            fi
           done <<< "$COMMENTS_JSON"
-          echo "Resolved previous comment(s)."
+          echo "Resolve summary: replied=$REPLIED minimized=$MINIMIZED failed=$FAILED"
       - name: Fetch base branch
         env:
           BASE_REF: ${{ github.base_ref }}
@@ -122,13 +137,15 @@ jobs:
               "${SL_ARGS[@]}" \
               -F line="$END_LINE" \
               -f commit_id="$HEAD_SHA" \
-              -H "Accept: application/vnd.github+json" 2>/dev/null; then
+              -H "Accept: application/vnd.github+json"; then
               POSTED=$((POSTED + 1))
             else
               FAILED=$((FAILED + 1))
+              echo "::warning::Failed to post review comment on ${PATH_VAL}:${END_LINE}."
             fi
           done < <(jq -c '.comments[]' "$WORK_DIR/ocr-output.json")
-          if [ "$FAILED" -gt 0 ] && [ "$POSTED" -eq 0 ]; then
+          echo "Review comments: posted=$POSTED failed=$FAILED of $REVIEW_COMMENT_COUNT"
+          if [ "$POSTED" -eq 0 ]; then
             SUMMARY=$(
               jq -r \
                 '.comments[] | "**\(.path):\(.start_line)-\(.end_line)**\n\(.content)\n"' \
@@ -139,9 +156,13 @@ jobs:
                 "$REVIEW_COMMENT_COUNT" \
                 "$SUMMARY"
             )
-            gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
-              -f body="$BODY" \
-              2>/dev/null
+            if gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              -f body="$BODY"; then
+              echo "::warning::Posted the round's findings as a PR comment; inline review comments could not be posted."
+            else
+              echo "::error::Findings could not be posted anywhere: every inline comment POST failed and the fallback PR comment POST failed. The gate blocks on findings nobody can see; re-run this review once the rate limit clears (issue #15)."
+              exit 1
+            fi
           fi
           exit 0
       - name: Gate
