@@ -161,9 +161,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # rm -f does not follow symlinks: a PR that commits this file as a
-          # symlink must not have the redirect clobber the link's target.
-          rm -f sonar-project.properties
+          # rm -rf unlinks symlinks without following them and also removes
+          # a directory at this path (rm -f would abort the pin step
+          # before the origin/main fallback could speak, issue #24).
+          rm -rf sonar-project.properties
           if git cat-file -e "origin/main:sonar-project.properties"; then
             git show "origin/main:sonar-project.properties" > sonar-project.properties
           else
@@ -180,14 +181,109 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           CI_RUN_ID: ${{ github.event.workflow_run.id }}
+          ZIP_PATH: ${{ runner.temp }}/sc-coverage.zip
         run: |
           set -euo pipefail
           # rm never follows symlinks: a PR committing coverage-report or
           # coverage.xml as a symlink must not redirect writes outside
           # the workspace.
           rm -rf coverage-report coverage.xml
-          gh run download "$CI_RUN_ID" -R "$REPO" -n coverage -D coverage-report
-          mv coverage-report/coverage.xml coverage.xml
+          # A bulk artifact download would extract every archive member
+          # inside the privileged workspace before any check could run,
+          # and the artifact is built by the PR's own CI: fetch the zip
+          # raw, bound it, extract only the coverage.xml member, and
+          # validate the report before the scanner parses it (issue #24).
+          read -r ARTIFACT_ID SIZE <<<"$(gh api --paginate "repos/$REPO/actions/runs/$CI_RUN_ID/artifacts" \
+            --jq '.artifacts[] | select(.name == "coverage") | "\(.id) \(.size_in_bytes)"')"
+          if [ -z "$ARTIFACT_ID" ]; then
+            echo "::error::coverage artifact not found in CI run $CI_RUN_ID"
+            exit 1
+          fi
+          if [ "${SIZE:-0}" -gt $((256 * 1024 * 1024)) ]; then
+            echo "::error::coverage artifact too large ($SIZE bytes)"
+            exit 1
+          fi
+          trap 'rm -f "$ZIP_PATH"' EXIT
+          gh api "repos/$REPO/actions/artifacts/$ARTIFACT_ID/zip" > "$ZIP_PATH"
+          # Trusted stdlib python in isolated mode only, never repo code
+          # from the untrusted tree (ADR 0001 invariant).
+          python3 -I - <<'PY'
+          import os
+          import sys
+          import xml.etree.ElementTree as ET
+          import zipfile
+
+          limit = 256 * 1024 * 1024
+          with zipfile.ZipFile(os.environ["ZIP_PATH"]) as archive:
+              if "coverage.xml" not in archive.namelist():
+                  print("::error::coverage artifact has no coverage.xml entry")
+                  sys.exit(1)
+              written = 0
+              with archive.open("coverage.xml") as src:
+                  # The report lands at the workspace root, outside
+                  # sonar.sources=subtitle_correction: the scanner never
+                  # walks it as source input, and no archive-supplied
+                  # path is ever followed.
+                  with open("coverage.xml", "wb") as dst:
+                      while chunk := src.read(1024 * 1024):
+                          written += len(chunk)
+                          if written > limit:
+                              print("::error::coverage.xml exceeds 256 MiB while extracting")
+                              sys.exit(1)
+                          dst.write(chunk)
+          if written == 0:
+              print("::error::coverage.xml is empty")
+              sys.exit(1)
+          if os.path.islink("coverage.xml") or not os.path.isfile("coverage.xml"):
+              print("::error::coverage.xml must be a regular file, not a symlink")
+              sys.exit(1)
+          data = open("coverage.xml", "rb").read()
+          # A BOM-less UTF-16/32 report is valid UTF-8 (ASCII interleaved
+          # with NULs), so expat auto-detects the real encoding and
+          # expands a hidden DTD: reject NUL first.
+          if b"\x00" in data:
+              print("::error::coverage.xml must be UTF-8 encoded")
+              sys.exit(1)
+          try:
+              text = data.decode("utf-8")
+          except UnicodeDecodeError:
+              print("::error::coverage.xml must be UTF-8 encoded")
+              sys.exit(1)
+          if "<!DOCTYPE" in text or "<!ENTITY" in text:
+              print("::error::coverage.xml must not contain DTD or entity declarations")
+              sys.exit(1)
+          parsed = ET.fromstring(data)
+          classes = list(parsed.iter("class"))
+          if not classes:
+              print("::error::coverage.xml has no class entries; the report is empty")
+              sys.exit(1)
+          # coverage.py emits the CI runner's absolute workspace path in
+          # <source>, which differs from this job's tree: anchor the
+          # mapping here and keep class filenames relative and contained.
+          for source in parsed.findall("./sources/source"):
+              source.text = "."
+          root = os.path.realpath(os.getcwd())
+          for cls in classes:
+              name = cls.get("filename", "")
+              if os.path.isabs(name) or ".." in name.split("/"):
+                  print(f"::error::coverage file path {name!r} escapes the workspace")
+                  sys.exit(1)
+          # Pull_request CI measures the merge commit while this job
+          # scans the PR head: entries for files missing from this tree
+          # cannot be mapped by the scanner anyway, drop them.
+          for classes_el in parsed.iter("classes"):
+              for cls in list(classes_el):
+                  name = cls.get("filename", "")
+                  if not os.path.isfile(os.path.join(root, name)):
+                      print(f"::warning::coverage file path {name!r} not in the scanned tree, removed")
+                      classes_el.remove(cls)
+          # A broken source mapping can drop every entry: refuse to hand
+          # the scanner an empty report instead of scanning 0% silently.
+          if not list(parsed.iter("class")):
+              print("::error::coverage.xml has no class entries after filtering; refusing to scan an empty report")
+              sys.exit(1)
+          ET.ElementTree(parsed).write("coverage.xml", encoding="UTF-8", xml_declaration=True)
+          PY
       - name: SonarQube Scan
         if: success() && steps.scan.outputs.skip != 'true'
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
