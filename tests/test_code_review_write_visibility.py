@@ -74,8 +74,13 @@ def test_resolve_step_paces_and_counts_its_writes() -> None:
         "not fire blind (issue #15: the unthrottled burst rate-limited the "
         "whole run)"
     )
-    assert re.search(r"until .*> /dev/null", run), (
-        "the backoff helper must retry failed writes before giving up"
+    assert "gh-with-backoff.sh" in run, (
+        "the retry helper lives in scripts/gh-with-backoff.sh; sourcing it "
+        "beats duplicating it verbatim in both steps"
+    )
+    assert "gh_read_with_backoff" in run, (
+        "the comments fetch must retry too: a throttled read of previous "
+        "comments otherwise resolves nothing for the whole round"
     )
     assert re.search(r"replied=\$", run) and re.search(r"minimized=\$", run), (
         "the resolve step must count and surface replied/minimized/failed "
@@ -98,6 +103,14 @@ def test_post_step_fails_loudly_when_nothing_was_posted() -> None:
         "inline comment posts must retry with backoff: a burst can trip the "
         "same secondary rate limit that killed every POST on PR #12"
     )
+    assert "gh-with-backoff.sh" in run, (
+        "the retry helper lives in scripts/gh-with-backoff.sh; sourcing it "
+        "beats duplicating it verbatim in both steps"
+    )
+    assert "::notice::" in run, (
+        "the fallback PR comment succeeding while inline posts failed is "
+        "worth a notice, not a warning: findings ARE visible"
+    )
     # Zero inline posts means the findings are invisible; the fallback is
     # the only remaining visibility path and its failure must fail the
     # step, not exit 0.
@@ -109,4 +122,29 @@ def test_post_step_fails_loudly_when_nothing_was_posted() -> None:
         "when the fallback PR comment also fails, the step must exit "
         "nonzero: that is the invisible-findings failure mode from "
         "issue #15"
+    )
+
+
+def test_backoff_script_retries_only_transient_failures() -> None:
+    script = REPO_ROOT / "scripts" / "gh-with-backoff.sh"
+    assert script.exists(), (
+        "scripts/gh-with-backoff.sh must exist: both workflow steps source "
+        "it for their retry policy"
+    )
+    text = script.read_text(encoding="utf-8")
+    assert "transient_gh_failure" in text, (
+        "retries must be gated on a transient-failure check so permanent "
+        "client errors (404/422) fail fast instead of burning sleeps"
+    )
+    assert re.search(r"rate limit", text, re.IGNORECASE), (
+        "the transient check must recognise the secondary rate limit that "
+        "caused issue #15"
+    )
+    assert "GH_RETRY_MAX_ATTEMPTS" in text, (
+        "the retry budget must be a named, overridable knob"
+    )
+    assert "duplicate" in text, (
+        "the script must state the accepted risk that a retried create "
+        "can duplicate its output (visible duplicate beats invisible "
+        "findings)"
     )
