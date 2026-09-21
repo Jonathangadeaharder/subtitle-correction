@@ -59,7 +59,7 @@ jobs:
               FAILED=$((FAILED + 1))
               echo "::warning::Reply to comment ${id} failed."
             fi
-            if gh api graphql -f query="mutation { minimizeComment(input: {subjectId: \"${node_id}\"}) { minimizedComment { isMinimized minimizedReason } } }" > /dev/null; then
+            if gh api graphql -f query="mutation { minimizeComment(input: {subjectId: \"${node_id}\", classifier: OUTDATED}) { minimizedComment { isMinimized minimizedReason } } }" > /dev/null; then
               MINIMIZED=$((MINIMIZED + 1))
             else
               FAILED=$((FAILED + 1))
@@ -145,7 +145,7 @@ jobs:
             fi
           done < <(jq -c '.comments[]' "$WORK_DIR/ocr-output.json")
           echo "Review comments: posted=$POSTED failed=$FAILED of $REVIEW_COMMENT_COUNT"
-          if [ "$POSTED" -eq 0 ]; then
+          if [ "$FAILED" -gt 0 ] && [ "$POSTED" -eq 0 ]; then
             SUMMARY=$(
               jq -r \
                 '.comments[] | "**\(.path):\(.start_line)-\(.end_line)**\n\(.content)\n"' \
