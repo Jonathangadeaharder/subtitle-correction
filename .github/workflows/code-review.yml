@@ -31,6 +31,16 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set +e
+          # Retrying writes with backoff: a fixed sleep only measures
+          # throttling, backoff overcomes it (issue #15).
+          gh_with_backoff() {
+            local attempt=1
+            until "$@" > /dev/null; do
+              [ "$attempt" -ge 5 ] && return 1
+              sleep $((2 ** attempt))
+              attempt=$((attempt + 1))
+            done
+          }
           if ! COMMENTS_JSON=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments" \
             --paginate \
             --jq '.[] | select(.user.login == "github-actions[bot]") | select(.in_reply_to_id == null) | "\(.id)\t\(.node_id)"'); then
@@ -47,21 +57,16 @@ jobs:
           MINIMIZE_FAILED=0
           while IFS=$'\t' read -r id node_id; do
             [ -z "$id" ] && continue
-            # Paced writes: an unthrottled ~110-write burst here tripped a
-            # secondary rate limit that killed every later POST (issue #15).
-            sleep 1
-            if gh api "repos/${REPO}/pulls/comments/${id}/replies" \
+            if gh_with_backoff gh api "repos/${REPO}/pulls/comments/${id}/replies" \
               --method POST \
-              -f body="Resolved — superseded by a newer review run." \
-              > /dev/null; then
+              -f body="Resolved — superseded by a newer review run."; then
               REPLIED=$((REPLIED + 1))
             else
               REPLY_FAILED=$((REPLY_FAILED + 1))
               echo "::warning::Reply to comment ${id} failed; skipping its minimize so one comment adds at most one failing write."
               continue
             fi
-            sleep 1
-            if gh api graphql -f query="mutation { minimizeComment(input: {subjectId: \"${node_id}\", classifier: OUTDATED}) { minimizedComment { isMinimized minimizedReason } } }" > /dev/null; then
+            if gh_with_backoff gh api graphql -f query="mutation { minimizeComment(input: {subjectId: \"${node_id}\", classifier: OUTDATED}) { minimizedComment { isMinimized minimizedReason } } }"; then
               MINIMIZED=$((MINIMIZED + 1))
             else
               MINIMIZE_FAILED=$((MINIMIZE_FAILED + 1))
@@ -118,12 +123,19 @@ jobs:
           WORK_DIR="${{ github.workspace }}"
           POSTED=0
           FAILED=0
+          # Retrying writes with backoff: a fixed sleep only measures
+          # throttling, backoff overcomes it (issue #15).
+          gh_with_backoff() {
+            local attempt=1
+            until "$@" > /dev/null; do
+              [ "$attempt" -ge 5 ] && return 1
+              sleep $((2 ** attempt))
+              attempt=$((attempt + 1))
+            done
+          }
           while IFS= read -r comment; do
-            # Paced writes: a burst here fails the same secondary rate
-            # limit the resolve burst once tripped (issue #15).
-            sleep 1
             PATH_VAL=$(echo "$comment" | jq -r '.path' | tr -d '[:cntrl:]')
-            START_LINE=$(echo "$comment" | jq -r '.start_line // empty')
+            START_LINE=$(echo "$comment" | jq -r '.start_line // empty' | tr -d '[:cntrl:]')
             END_LINE=$(echo "$comment" | jq -r '.end_line' | tr -d '[:cntrl:]')
             CONTENT=$(echo "$comment" | jq -r '.content')
             SUGGESTION=$(echo "$comment" | jq -r '.suggestion_code // empty')
@@ -136,7 +148,7 @@ jobs:
             if [ -n "$START_LINE" ] && [ "$START_LINE" != "$END_LINE" ]; then
               SL_ARGS=(-F "start_line=$START_LINE")
             fi
-            if gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments" \
+            if gh_with_backoff gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments" \
               -f body="$BODY" \
               -f path="$PATH_VAL" \
               "${SL_ARGS[@]}" \
@@ -161,7 +173,7 @@ jobs:
                 "$REVIEW_COMMENT_COUNT" \
                 "$SUMMARY"
             )
-            if gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            if gh_with_backoff gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
               -f body="$BODY"; then
               echo "::warning::Posted the round's findings as a PR comment; inline review comments could not be posted."
             else

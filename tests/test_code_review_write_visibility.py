@@ -66,11 +66,16 @@ def test_no_write_call_swallows_its_errors() -> None:
 def test_resolve_step_paces_and_counts_its_writes() -> None:
     run = step_run_text(RESOLVE_STEP)
     # A ~110-write burst in ~30s is what tripped the secondary rate limit
-    # on PR #12; each iteration must sleep between its writes.
-    assert re.search(r"sleep \d", run), (
-        "the resolve step must pace its writes with a sleep between "
-        "iterations (issue #15: the unthrottled burst rate-limited the "
+    # on PR #12, and a fixed sleep only measures throttling. Writes must
+    # retry with backoff so transient throttling is overcome, and the
+    # outcome of every write must be counted.
+    assert "gh_with_backoff" in run, (
+        "the resolve step must retry its writes with exponential backoff, "
+        "not fire blind (issue #15: the unthrottled burst rate-limited the "
         "whole run)"
+    )
+    assert re.search(r"until .*> /dev/null", run), (
+        "the backoff helper must retry failed writes before giving up"
     )
     assert re.search(r"replied=\$", run) and re.search(r"minimized=\$", run), (
         "the resolve step must count and surface replied/minimized/failed "
@@ -88,6 +93,10 @@ def test_post_step_fails_loudly_when_nothing_was_posted() -> None:
     run = step_run_text(POST_STEP)
     assert re.search(r"posted=\$POSTED", run), (
         "the post step must echo posted/failed counts into the log"
+    )
+    assert "gh_with_backoff" in run, (
+        "inline comment posts must retry with backoff: a burst can trip the "
+        "same secondary rate limit that killed every POST on PR #12"
     )
     # Zero inline posts means the findings are invisible; the fallback is
     # the only remaining visibility path and its failure must fail the
