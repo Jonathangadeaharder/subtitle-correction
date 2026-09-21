@@ -68,3 +68,5 @@ subtitle_correction/
 - Model checkpoints are **not committed** — fused weights are large. Keep the fused model at
   `runs/subtitle-corrector-4b-fused`, or point `SUBTITLE_CORRECTOR_MODEL` at it.
 - All commands run via `uv run subtitle-correction <command>` (see `pyproject.toml`).
+
+<!-- Verification marker for post-merge workflow_run smoke test (issue #11); harmless comment. -->
