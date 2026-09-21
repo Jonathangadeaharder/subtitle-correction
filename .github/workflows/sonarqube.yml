@@ -277,6 +277,11 @@ jobs:
                   if not os.path.isfile(os.path.join(root, name)):
                       print(f"::warning::coverage file path {name!r} not in the scanned tree, removed")
                       classes_el.remove(cls)
+          # A broken source mapping can drop every entry: refuse to hand
+          # the scanner an empty report instead of scanning 0% silently.
+          if not list(parsed.iter("class")):
+              print("::error::coverage.xml has no class entries after filtering; refusing to scan an empty report")
+              sys.exit(1)
           ET.ElementTree(parsed).write("coverage.xml", encoding="UTF-8", xml_declaration=True)
           PY
       - name: SonarQube Scan

@@ -121,6 +121,12 @@ def test_coverage_step_validates_the_report_before_scanning() -> None:
         "a class-less report is an empty report: it must fail loudly "
         "instead of scanning nothing (issue #24)"
     )
+    assert "no class entries after filtering" in run, (
+        "the emptiness check must run again after the unmappable-entry "
+        "removal loop: if the source anchoring or path mapping is broken "
+        "and every class is dropped, the scanner must not silently "
+        "receive an empty report (PR #26 OCR round 1, blocking)"
+    )
     assert "python3 -I" in run, (
         "the extraction and validation must run trusted stdlib python in "
         "isolated mode, never repository code from the untrusted tree "
