@@ -9,14 +9,30 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # Rapid pushes or PR updates cancel the superseded CI run instead of
+  # queueing redundant full runs on the self-hosted runner.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test
     runs-on: [self-hosted, macOS, ARM64, VidiomTM]
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6.0.3
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - run: uv sync --extra dev --frozen
       - run: uv run ruff check .
-      - run: uv run pytest
+      - run: uv run pytest --cov-report=xml
       - run: uv run python -m compileall subtitle_correction
+      # Consumed by the SonarQube workflow_run scan, which never runs
+      # tests. Only green runs upload; a green run missing coverage.xml
+      # fails here at the point of origin, not as a scan-side download error.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: error
+          retention-days: 1

@@ -1,34 +1,314 @@
 name: SonarQube
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_run:
+    # Hard dependency: the trigger matches the CI workflow by name, so
+    # renaming CI silently breaks the required SonarQube check. Both PR and
+    # main scans arrive here: CI runs on pull_request and on push to main.
+    workflows: [CI]
+    types: [completed]
+
+concurrency:
+  # Keyed by head SHA: a run for a superseded SHA can never cancel the
+  # current head's in-flight scan; only same-SHA reruns cancel each other.
+  # The repository scope keeps identically named fork branches separate.
+  group: sonarqube-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
-  pull-requests: write
+  pull-requests: read
+
+env:
+  # Single source of truth for the check-run name; branch protection's
+  # required context must match this string exactly.
+  CHECK_NAME: SonarQube
 
 jobs:
   sonarqube:
-    name: SonarQube
+    # Distinct from CHECK_NAME: this job's automatic check run attaches to
+    # the default-branch SHA and must not share the required context name.
+    name: SonarQube scan
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: write
+      # Required to download the coverage artifact from the CI run.
+      actions: read
+    # Dependabot pull_request runs never receive secrets, so scans run
+    # via workflow_run (default-branch context, secrets always available).
+    # Privileged job with PR-head checkout: never execute the tree here.
+    if: >-
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      (github.event.workflow_run.event == 'pull_request' ||
+       github.event.workflow_run.event == 'push')
     runs-on: [self-hosted, macOS, ARM64, VidiomTM]
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - name: Derive scan arguments
+        id: scan
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SKIP=false
+          ARGS=""
+          HEAD_SHA=$(jq -r '.workflow_run.head_sha' "$GITHUB_EVENT_PATH")
+          EVENT_KIND=$(jq -r '.workflow_run.event' "$GITHUB_EVENT_PATH")
+          CI_CONCLUSION=$(jq -r '.workflow_run.conclusion' "$GITHUB_EVENT_PATH")
+          echo "ci_conclusion=$CI_CONCLUSION" >> "$GITHUB_OUTPUT"
+          # A red or cancelled CI must never yield a green SonarQube check:
+          # fail here so the reporter posts failure on the live head.
+          if [ "$CI_CONCLUSION" != "success" ]; then
+            echo "::error::Triggering CI run concluded '$CI_CONCLUSION'; the scan only runs on a green CI. Fix CI and push to re-run."
+            exit 1
+          fi
+          load_pr() {
+            PR_JSON=$(gh pr view "$1" -R "$REPO" --json headRefOid,baseRefName,state)
+            PR_SHA=$(jq -r '.headRefOid' <<< "$PR_JSON")
+            BASE=$(jq -r '.baseRefName' <<< "$PR_JSON")
+            PR_STATE=$(jq -r '.state' <<< "$PR_JSON")
+          }
+          if [ "$EVENT_KIND" = "pull_request" ]; then
+            BRANCH=$(jq -r '.workflow_run.head_branch' "$GITHUB_EVENT_PATH")
+            # BRANCH is interpolated into gh filters below, so its charset
+            # must be validated before any use. Validation failures fail
+            # the job: the author gets a loud, actionable error instead of
+            # a silently dropped event.
+            if ! [[ "$BRANCH" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
+              echo "::error::Branch name '$BRANCH' contains unsupported characters; refusing to scan. Rename the branch to [A-Za-z0-9._/-] only, starting with an alphanumeric, to unblock the SonarQube gate."
+              exit 1
+            fi
+            PR_NUMBER=$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")
+            if [ -z "$PR_NUMBER" ]; then
+              # Rows include closed/merged PRs: their presence separates a
+              # genuinely stale scan from a lookup miss on a live head.
+              PR_ROWS=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+                --jq '.[] | "\(.number)\t\(.state)\t\(.head.ref)"')
+              PR_NUMBER=$(awk -F'\t' -v b="$BRANCH" '$2 == "open" && $3 == b {print $1; exit}' <<< "$PR_ROWS")
+              if [ -z "$PR_NUMBER" ] && [ -z "$PR_ROWS" ]; then
+                echo "::error::No pull requests found for scanned SHA $HEAD_SHA; this may be a live head whose association has not propagated yet. Re-run this workflow or push again."
+                exit 1
+              fi
+            fi
+            if [ -z "$PR_NUMBER" ]; then
+              echo "::warning::No open PR found for branch '$BRANCH'; the scan is stale (PR merged or closed)."
+              SKIP=true
+            elif ! [[ "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+              echo "::error::PR number '$PR_NUMBER' is not a plain integer; refusing to scan."
+              exit 1
+            else
+              load_pr "$PR_NUMBER"
+              if [ "$PR_SHA" != "$HEAD_SHA" ] || [ "$PR_STATE" != "OPEN" ]; then
+                # payload [0] can pick another PR sharing the SHA (order
+                # is unspecified, entries carry no state): re-resolve from
+                # the branch-based rows before treating the scan as stale.
+                ALT_PR=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" \
+                  --jq '.[] | "\(.number)\t\(.state)\t\(.head.ref)"' \
+                  | awk -F'\t' -v b="$BRANCH" \
+                  '$2 == "open" && $3 == b {print $1; exit}')
+                if [ -n "$ALT_PR" ] && [ "$ALT_PR" != "$PR_NUMBER" ]; then
+                  PR_NUMBER="$ALT_PR"
+                  load_pr "$PR_NUMBER"
+                fi
+              fi
+              if [ "$PR_SHA" != "$HEAD_SHA" ]; then
+                echo "::warning::PR #$PR_NUMBER head $PR_SHA does not match scanned SHA $HEAD_SHA; the scan is stale."
+                SKIP=true
+              elif [ "$PR_STATE" != "OPEN" ]; then
+                echo "::warning::PR #$PR_NUMBER is $PR_STATE; the scan is stale."
+                SKIP=true
+              elif ! [[ "$BASE" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
+                echo "::error::Base branch '$BASE' contains unsupported characters; refusing to scan."
+                exit 1
+              else
+                ARGS="-Dsonar.pullrequest.key=$PR_NUMBER -Dsonar.pullrequest.branch=$BRANCH -Dsonar.pullrequest.base=$BASE -Dsonar.python.coverage.reportPaths=coverage.xml"
+              fi
+            fi
+          else
+            # workflow_run of CI's push runs: a plain main-branch scan.
+            ARGS="-Dsonar.python.coverage.reportPaths=coverage.xml"
+          fi
+          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
+          if [ "$SKIP" = "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### SonarQube scan skipped"
+              echo "No analysis ran and no check was posted for this event ($EVENT_KIND); the required context stays on 'Expected'. See the warnings in the derive step log for the reason."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        # The checked-out tree is untrusted PR code: never leave the
+        # GITHUB_TOKEN persisted in its .git/config.
+        if: success() && steps.scan.outputs.skip != 'true'
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
+          persist-credentials: false
+      - name: Pin scanner config to main
+        # The scanner must be driven only by this pinned config from main,
+        # never by PR-supplied properties: a PR could point sonar.sources
+        # outside the workspace and upload arbitrary runner files.
+        if: success() && steps.scan.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # rm -f does not follow symlinks: a PR that commits this file as a
+          # symlink must not have the redirect clobber the link's target.
+          rm -f sonar-project.properties
+          if git cat-file -e "origin/main:sonar-project.properties"; then
+            git show "origin/main:sonar-project.properties" > sonar-project.properties
+          else
+            echo "::error::sonar-project.properties is missing from origin/main; refusing to fall back to the untrusted PR-supplied config."
+            exit 1
+          fi
+      - name: Download coverage report from the CI run
+        # Only the unprivileged CI job may run tests, so the coverage report
+        # is pulled from the triggering CI run's artifact instead of ever
+        # executing the tree here. The artifact name must match ci.yml's upload.
+        if: success() && steps.scan.outputs.skip != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          CI_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          # rm never follows symlinks: a PR committing coverage-report or
+          # coverage.xml as a symlink must not redirect writes outside
+          # the workspace.
+          rm -rf coverage-report coverage.xml
+          gh run download "$CI_RUN_ID" -R "$REPO" -n coverage -D coverage-report
+          mv coverage-report/coverage.xml coverage.xml
       - name: SonarQube Scan
+        if: success() && steps.scan.outputs.skip != 'true'
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: http://localhost:9001
+        with:
+          args: ${{ steps.scan.outputs.args }}
       - name: Print failing quality gate conditions
         if: failure()
+        shell: bash
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
           BASE="http://localhost:9001"
+          # Single source of truth for the key is the pinned properties file.
+          # This step also runs on pre-pin failures: guard instead of
+          # querying with an empty key.
+          PROJECT_KEY=$(sed -n 's/^sonar.projectKey=//p' sonar-project.properties 2>/dev/null || true)
+          if [ -z "$PROJECT_KEY" ]; then
+            echo "::warning::No pinned sonar-project.properties in this run; cannot print quality-gate conditions."
+            exit 0
+          fi
           curl -sS --max-time 10 -u "$SONAR_TOKEN:" \
-            "$BASE/api/qualitygates/project_status?projectKey=VidiomTM_subtitle-correction" \
+            "$BASE/api/qualitygates/project_status?projectKey=$PROJECT_KEY" \
             | jq '.projectStatus.conditions[] | select(.status=="ERROR")' || true
+      - name: Report result to the PR head
+        # workflow_run check runs attach to the default-branch SHA, so the
+        # PR's required SonarQube check must be created on the PR head SHA.
+        # Only PR events carry a required context; push-run results live in
+        # this workflow's own check run.
+        if: always() && github.event.workflow_run.event == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          JOB_STATUS: ${{ job.status }}
+          SKIPPED: ${{ steps.scan.outputs.skip }}
+          CI_CONCLUSION: ${{ steps.scan.outputs.ci_conclusion }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Bounded retry: a transient POST failure would leave the
+          # required check on "Expected" with no signal on the PR itself.
+          post_with_retry() {
+            local i
+            for i in 1 2 3; do
+              if gh api "$@"; then
+                return 0
+              fi
+              [ "$i" = 3 ] && return 1
+              sleep $((i * 5))
+            done
+          }
+          if [ "$SKIPPED" = "true" ]; then
+            # A stale scan posts nothing: a "skipped" conclusion satisfies
+            # required checks, so posting one could let a close-and-reopen
+            # race pass the gate. "Expected" blocks the merge safely.
+            echo "Stale scan; no check posted. The required SonarQube context stays on 'Expected' until the branch becomes live again."
+            exit 0
+          fi
+          if [ -n "${CI_CONCLUSION:-}" ] && [ "$CI_CONCLUSION" != "success" ]; then
+            CONCLUSION="failure"
+            SUMMARY="Triggering CI run concluded '$CI_CONCLUSION'; SonarQube did not scan. Fix CI and push."
+          elif [ "$JOB_STATUS" = "success" ]; then
+            CONCLUSION="success"
+            SUMMARY="SonarQube scan completed and passed the quality gate."
+          elif [ "$JOB_STATUS" = "cancelled" ]; then
+            # A concurrency-cancelled run posts this 'cancelled' check; the
+            # superseding run owns the final conclusion. Chained cancels
+            # leave this transient check until some run for the SHA ends.
+            CONCLUSION="cancelled"
+            SUMMARY="SonarQube run was cancelled, typically because a newer run superseded it."
+          else
+            CONCLUSION="failure"
+            SUMMARY="SonarQube scan failed or the job errored; see the run log."
+          fi
+          post_with_retry "repos/$REPO/check-runs" --method POST \
+            -f name="$CHECK_NAME" \
+            -f head_sha="$HEAD_SHA" \
+            -f status="completed" \
+            -f conclusion="$CONCLUSION" \
+            -f "output[title]=$CHECK_NAME" \
+            -f "output[summary]=$SUMMARY" \
+            -f "details_url=https://github.com/$REPO/actions/runs/$RUN_ID" \
+            --jq '.id'
+  fork-notice:
+    name: SonarQube (fork)
+    permissions:
+      checks: write
+    # Fork runs never reach the privileged scan job, so the required check
+    # would stay on "Expected". action_required keeps the gate honest:
+    # "skipped" satisfies required checks and lets fork PRs bypass review.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name != github.repository
+    runs-on: [self-hosted, macOS, ARM64, VidiomTM]
+    timeout-minutes: 5
+    steps:
+      - name: Report unanalyzed fork PR to the PR head
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # Bounded retry: a transient POST failure would leave the fork
+          # PR's required check on "Expected" with no signal at all.
+          post_with_retry() {
+            local i
+            for i in 1 2 3; do
+              if gh api "$@"; then
+                return 0
+              fi
+              [ "$i" = 3 ] && return 1
+              sleep $((i * 5))
+            done
+          }
+          post_with_retry "repos/$REPO/check-runs" --method POST \
+            -f name="$CHECK_NAME" \
+            -f head_sha="$HEAD_SHA" \
+            -f status="completed" \
+            -f conclusion="action_required" \
+            -f "output[title]=$CHECK_NAME" \
+            -f "output[summary]=Fork pull requests are not analyzed by SonarQube. A maintainer must review the code and override this required check to merge." \
+            -f "details_url=https://github.com/$REPO/actions/runs/$RUN_ID" \
+            --jq '.id'
