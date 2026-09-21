@@ -124,7 +124,11 @@ jobs:
                 echo "::error::Base branch '$BASE' contains unsupported characters; refusing to scan."
                 exit 1
               else
-                ARGS="-Dsonar.pullrequest.key=$PR_NUMBER -Dsonar.pullrequest.branch=$BRANCH -Dsonar.pullrequest.base=$BASE -Dsonar.python.coverage.reportPaths=coverage.xml"
+                # Community Build rejects sonar.pullrequest.* (Developer
+                # Edition only, see issue #18): scan the PR head bare.
+                # The bare analysis is attributed to the main branch.
+                echo "::notice::PR decoration disabled: the SonarQube server is Community Build and rejects sonar.pullrequest.* properties. Scanning PR #$PR_NUMBER head as a plain analysis attributed to the project's main branch; the next main-branch scan overwrites it."
+                ARGS="-Dsonar.python.coverage.reportPaths=coverage.xml"
               fi
             fi
           else
@@ -249,7 +253,7 @@ jobs:
             SUMMARY="Triggering CI run concluded '$CI_CONCLUSION'; SonarQube did not scan. Fix CI and push."
           elif [ "$JOB_STATUS" = "success" ]; then
             CONCLUSION="success"
-            SUMMARY="SonarQube scan completed and passed the quality gate."
+            SUMMARY="SonarQube scan of the PR head completed. Community Build has no per-PR decoration: the analysis is attributed to the project's main branch until the next main scan."
           elif [ "$JOB_STATUS" = "cancelled" ]; then
             # A concurrency-cancelled run posts this 'cancelled' check; the
             # superseding run owns the final conclusion. Chained cancels
